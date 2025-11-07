@@ -1,4 +1,19 @@
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
+import telebot
+import time
+from datetime import datetime
+import requests
+
+
+
+
+
+
+
+import os
 import telebot
 import time
 from datetime import datetime

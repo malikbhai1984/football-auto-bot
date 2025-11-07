@@ -13,22 +13,6 @@ import requests
 
 
 
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    json_str = request.get_data().decode('UTF-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return 'OK', 200
-
-
-
-
-
-
-
-
-
-
 import os
 import math
 import time
@@ -57,10 +41,24 @@ API_BASE = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
 # -------------------------
-# Init Flask + bot
+# ✅ PEHLE FLASK APP DEFINE KARO
 # -------------------------
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# -------------------------
+# ✅ AB WEBHOOK ROUTES DEFINE KARO
+# -------------------------
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('UTF-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return 'OK', 200
+
+@app.route('/')
+def home():
+    return f"⚽ {BOT_NAME} is running!", 200
 
 # Keep set of alerts sent to avoid duplicates: (fixture_id, market_key)
 sent_alerts = set()
@@ -335,20 +333,6 @@ def cmd_any(m):
         bot.reply_to(m, reply)
     else:
         bot.reply_to(m, "⚽ Send me like: 'Levante vs Celta Vigo' for a full analysis and (only) 85%+ bets.")
-
-# -------------------------
-# FLASK WEBHOOK ROUTES - YEH ADD KARNA ZAROORI HAI
-# -------------------------
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    json_str = request.get_data().decode('UTF-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return 'OK', 200
-
-@app.route('/')
-def home():
-    return f"⚽ {BOT_NAME} is running!", 200
 
 # -------------------------
 # Background live poller

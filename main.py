@@ -10,6 +10,7 @@ API_KEY = os.getenv("API_KEY")
 BOT_NAME = os.getenv("BOT_NAME", "Football Auto Bot")
 
 if not BOT_TOKEN or not OWNER_CHAT_ID:
+    print("DEBUG:", BOT_TOKEN, OWNER_CHAT_ID, API_KEY)
     raise ValueError("❌ BOT_TOKEN or OWNER_CHAT_ID missing in Railway variables!")
 
 bot = telebot.TeleBot(BOT_TOKEN)

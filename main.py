@@ -12,13 +12,30 @@ import requests
 
 
 
-# main.py
+
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('UTF-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return 'OK', 200
+
+
+
+
+
+
+
+
+
+
 import os
 import math
 import time
 import asyncio
 import requests
 import telebot
+import threading
 from flask import Flask, request
 from datetime import datetime, timedelta
 
@@ -320,6 +337,20 @@ def cmd_any(m):
         bot.reply_to(m, "⚽ Send me like: 'Levante vs Celta Vigo' for a full analysis and (only) 85%+ bets.")
 
 # -------------------------
+# FLASK WEBHOOK ROUTES - YEH ADD KARNA ZAROORI HAI
+# -------------------------
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    json_str = request.get_data().decode('UTF-8')
+    update = telebot.types.Update.de_json(json_str)
+    bot.process_new_updates([update])
+    return 'OK', 200
+
+@app.route('/')
+def home():
+    return f"⚽ {BOT_NAME} is running!", 200
+
+# -------------------------
 # Background live poller
 # -------------------------
 async def analyze_live_fixture_and_alert(f):
@@ -357,28 +388,32 @@ async def poll_live_loop():
             print("poll_live_loop error:", e)
         await asyncio.sleep(300)  # 5 minutes
 
+def start_poller():
+    """Start background poller in a separate thread"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(poll_live_loop())
+
 # -------------------------
-# Run app + background tasks (use hypercorn)
+# Run app + background tasks
 # -------------------------
-async def main():
-    print("🏁 Phase3: Setting webhook and starting background poller...")
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{DOMAIN}/{BOT_TOKEN}")
-    print("✅ Webhook set:", f"{DOMAIN}/{BOT_TOKEN}")
-
-    # start poller
-    asyncio.create_task(poll_live_loop())
-
-    # serve Flask with hypercorn
-    from hypercorn.asyncio import serve
-    from hypercorn.config import Config
-    cfg = Config()
-    cfg.bind = ["0.0.0.0:8080"]
-    await serve(app, cfg)
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    print("🏁 Setting webhook and starting background poller...")
+    
+    # Webhook setup
+    bot.remove_webhook()
+    time.sleep(1)
+    bot.set_webhook(url=f"{DOMAIN}/{BOT_TOKEN}")
+    print(f"✅ Webhook set: {DOMAIN}/{BOT_TOKEN}")
 
+    # Start background poller in separate thread
+    poller_thread = threading.Thread(target=start_poller, daemon=True)
+    poller_thread.start()
+    print("✅ Background poller started")
+
+    # Run Flask app
+    print("✅ Starting Flask server...")
+    app.run(host="0.0.0.0", port=8080, debug=False)
 
 
 

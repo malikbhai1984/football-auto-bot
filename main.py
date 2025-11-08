@@ -1,11 +1,5 @@
-import os
-from dotenv import load_dotenv
-load_dotenv()
 
-import telebot
-import time
-from datetime import datetime
-import requests
+
 
 
 
@@ -348,6 +342,12 @@ bot.set_webhook(url=webhook_url)
 print(f"✅ Webhook set: {webhook_url}")
 print("🤖 Malik Bhai Intelligent Bot is now active with smart responses!")
 app.run(host='0.0.0.0', port=8080)
+
+
+
+
+
+
 
 
 

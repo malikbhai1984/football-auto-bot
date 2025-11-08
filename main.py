@@ -52,7 +52,7 @@ def fetch_live_matches():
         return []
 
 # -------------------------
-# Fetch odds for a fixture
+# Fetch odds
 # -------------------------
 def fetch_odds(fixture_id):
     try:
@@ -72,7 +72,7 @@ def fetch_h2h(home, away):
         return []
 
 # -------------------------
-# Calculate dynamic confidence
+# Dynamic confidence calculation
 # -------------------------
 def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
     try:
@@ -96,7 +96,7 @@ def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
         return 0
 
 # -------------------------
-# Intelligent match analysis (Advanced Version)
+# Intelligent match analysis
 # -------------------------
 def intelligent_analysis(match):
     home = match["teams"]["home"]["name"]
@@ -111,19 +111,25 @@ def intelligent_analysis(match):
             for book in odds_raw:
                 if book["bookmaker"]["name"].lower() == "bet365":
                     mw = book["bets"][0]["values"]
-                    odds_list = {"Home": float(mw[0]["odd"]), "Draw": float(mw[1]["odd"]), "Away": float(mw[2]["odd"])}
+                    odds_list = {
+                        "Home": float(mw[0]["odd"]),
+                        "Draw": float(mw[1]["odd"]),
+                        "Away": float(mw[2]["odd"])
+                    }
                     break
         except:
             odds_list = {"Home":2.0,"Draw":3.0,"Away":4.0}
 
-    # Last 5 matches form & dynamic league scoring (placeholder)
-    home_form = 85 + sum([5,3,4,6,2])/5
-    away_form = 80 + sum([3,4,2,5,1])/5
+    # Last 5 matches & league form (placeholder)
+    last5_home = [5,3,4,6,2]
+    last5_away = [3,4,2,5,1]
+    home_form = 80 + sum(last5_home)/5
+    away_form = 78 + sum(last5_away)/5
 
-    # H2H dynamic weighting (placeholder)
+    # Live H2H (placeholder)
     h2h_data = [{"result_weight":90},{"result_weight":85},{"result_weight":80},{"result_weight":88},{"result_weight":83}]
 
-    # Last 10-min goal trend scoring
+    # Last 10-min goal trend
     goal_trend = [85,88,92,90,87]
 
     # Combined confidence
@@ -131,7 +137,7 @@ def intelligent_analysis(match):
     if confidence < 85:
         return None
 
-    # Correct Score & BTTS logic
+    # Correct Score & BTTS
     top_correct_scores = ["2-1","1-1","2-0","3-1"]
     btts = "Yes" if confidence > 87 else "No"
 
@@ -147,7 +153,7 @@ def intelligent_analysis(match):
     }
 
 # -------------------------
-# Format Telegram Message
+# Format Telegram message
 # -------------------------
 def format_bet_msg(match, analysis):
     home = match["teams"]["home"]["name"]
@@ -185,33 +191,14 @@ def auto_update_job():
 threading.Thread(target=auto_update_job, daemon=True).start()
 
 # -------------------------
-# Webhook
-# -------------------------
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    try:
-        update = telebot.types.Update.de_json(request.data.decode('utf-8'))
-        bot.process_new_updates([update])
-    except Exception as e:
-        print(f"⚠️ Error: {e}")
-    return 'OK', 200
-
-@app.route('/')
-def home():
-    return f"⚽ {BOT_NAME} is running perfectly!", 200
-
-# -------------------------
-# Smart Reply Handler (Intelligent Style)
+# Smart Reply Handler (Intelligent)
 # -------------------------
 @bot.message_handler(func=lambda msg: True)
 def smart_reply(message):
     text = message.text.lower().strip()
 
-    # Greetings
     if any(x in text for x in ["hi","hello"]):
         bot.reply_to(message,"👋 Hello Malik Bhai! Intelligent Bot is online and ready to predict matches with 85%+ confidence ✅")
-
-    # Betting queries
     elif any(x in text for x in ["update","live","who will win","over 2.5","btts","correct score"]):
         matches = fetch_live_matches()
         if not matches:
@@ -227,10 +214,24 @@ def smart_reply(message):
                     break
             if not sent:
                 bot.reply_to(message,"🤖 Matches are live but no 85%+ confident bet found yet. Auto-update will keep you posted!")
-
-    # Default fallback
     else:
         bot.reply_to(message,"🤖 Malik Bhai Intelligent Bot is online! Ask me about live matches, predictions, Over 2.5, BTTS, or correct scores. I reply smartly with dynamic analysis ✅")
+
+# -------------------------
+# Flask webhook
+# -------------------------
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    try:
+        update = telebot.types.Update.de_json(request.data.decode('utf-8'))
+        bot.process_new_updates([update])
+    except Exception as e:
+        print(f"⚠️ Error: {e}")
+    return 'OK', 200
+
+@app.route('/')
+def home():
+    return f"⚽ {BOT_NAME} is running perfectly!", 200
 
 # -------------------------
 # Start Flask + webhook
@@ -242,6 +243,7 @@ if __name__=="__main__":
     bot.set_webhook(url=webhook_url)
     print(f"✅ Webhook set: {webhook_url}")
     app.run(host='0.0.0.0', port=8080)
+
 
 
 

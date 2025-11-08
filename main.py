@@ -138,10 +138,10 @@ class IntelligentAnalyst:
 """
 
 # -------------------------
-# Enhanced Football API Functions with Real Data
+# Football API Functions
 # -------------------------
 def fetch_live_matches():
-    """Fetch live matches with enhanced error handling"""
+    """Fetch live matches from API"""
     try:
         print("🔄 Fetching live matches from API...")
         response = requests.get(f"{API_URL}/fixtures?live=all", headers=HEADERS, timeout=10)
@@ -158,15 +158,14 @@ def fetch_live_matches():
         return []
 
 def fetch_odds(fixture_id):
-    """Fetch real-time odds with market analysis"""
+    """Fetch odds for specific fixture"""
     try:
         response = requests.get(f"{API_URL}/odds?fixture={fixture_id}", headers=HEADERS, timeout=10)
         if response.status_code == 200:
-            odds_data = response.json().get("response", [])
-            return analyze_odds_patterns(odds_data)
-        return {"type": "standard", "home": 2.0, "draw": 3.2, "away": 3.8}
+            return response.json().get("response", [])
+        return []
     except:
-        return {"type": "standard", "home": 2.0, "draw": 3.2, "away": 3.8}
+        return []
 
 def fetch_h2h_stats(home_id, away_id):
     """Simulate H2H analysis with realistic data"""
@@ -228,7 +227,7 @@ def analyze_odds_patterns(odds_data):
     return {"type": "competitive", "home": 2.2, "draw": 3.4, "away": 3.3}
 
 # -------------------------
-# Advanced AI Prediction Engine with Real-time Factors
+# Advanced AI Prediction Engine
 # -------------------------
 class AdvancedPredictor:
     def __init__(self):
@@ -296,8 +295,6 @@ class AdvancedPredictor:
         base_scores = ["1-0", "2-0", "2-1", "1-1", "0-0", "3-1", "3-0", "2-2", "1-2", "0-1"]
         
         avg_goals = h2h_data["avg_goals"]
-        home_goals = home_form["goals_scored"] / 5
-        away_goals = away_form["goals_scored"] / 5
         
         if avg_goals >= 3.5:
             likely_scores = ["2-1", "3-1", "2-2", "3-2", "1-2"]
@@ -406,7 +403,7 @@ def generate_intelligent_prediction(match):
     }
 
 # -------------------------
-# Enhanced Auto Prediction System (5-minute intervals)
+# Auto Prediction System (5-minute intervals)
 # -------------------------
 def intelligent_auto_predictor():
     """Advanced auto-prediction with comprehensive monitoring"""
@@ -439,7 +436,7 @@ def intelligent_auto_predictor():
         time.sleep(300)
 
 # -------------------------
-# Enhanced Bot Message Handlers
+# Bot Message Handlers
 # -------------------------
 @bot.message_handler(commands=['start', 'help', 'assist'])
 def send_welcome(message):

@@ -22,6 +22,7 @@ import requests
 import threading
 import time
 from datetime import datetime
+import math
 
 # -------------------------
 # Load environment variables
@@ -64,98 +65,140 @@ def fetch_odds(fixture_id):
         return []
 
 # -------------------------
+# Fetch team form (last 5 matches)
+# -------------------------
+def fetch_team_form(team_id):
+    try:
+        resp = requests.get(f"{API_URL}/fixtures?team={team_id}&last=5", headers=HEADERS).json()
+        matches = resp.get("response", [])
+        wins = draws = losses = goals_scored = goals_conceded = 0
+        for m in matches:
+            home_goals = m["goals"]["home"]
+            away_goals = m["goals"]["away"]
+            if m["teams"]["home"]["id"] == team_id:
+                goals_scored += home_goals
+                goals_conceded += away_goals
+                if home_goals > away_goals: wins+=1
+                elif home_goals==away_goals: draws+=1
+                else: losses+=1
+            else:
+                goals_scored += away_goals
+                goals_conceded += home_goals
+                if away_goals > home_goals: wins+=1
+                elif home_goals==away_goals: draws+=1
+                else: losses+=1
+        form_score = ((wins*3 + draws)/15)*100
+        avg_goals = goals_scored/5
+        return form_score, avg_goals
+    except:
+        return 70, 1.2
+
+# -------------------------
 # Fetch H2H stats
 # -------------------------
-def fetch_h2h(home, away):
+def fetch_h2h(home_id, away_id):
     try:
-        resp = requests.get(f"{API_URL}/fixtures/headtohead?h2h={home}-{away}", headers=HEADERS).json()
-        return resp.get("response", [])
+        resp = requests.get(f"{API_URL}/fixtures/headtohead?h2h={home_id}-{away_id}", headers=HEADERS).json()
+        matches = resp.get("response", [])
+        h2h_weight = 0
+        count = 0
+        for m in matches[:5]:
+            home_goals = m["goals"]["home"]
+            away_goals = m["goals"]["away"]
+            if home_goals>away_goals: h2h_weight += 90
+            elif home_goals==away_goals: h2h_weight += 80
+            else: h2h_weight += 70
+            count+=1
+        return h2h_weight/count if count>0 else 75
     except:
-        return []
+        return 75
 
 # -------------------------
-# Probability & Confidence Calculation
+# Calculate confidence
 # -------------------------
-def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
+def calculate_confidence(odds, home_form, away_form, h2h, avg_goal):
     try:
         # Odds weight
-        odds_weight = 0
-        if odds_data:
-            try:
-                home_odd = float(odds_data.get("Home", 2))
-                draw_odd = float(odds_data.get("Draw", 3))
-                away_odd = float(odds_data.get("Away", 4))
-                odds_weight = max(100/home_odd, 100/draw_odd, 100/away_odd)
-            except: odds_weight = 70
-
-        # Team form weight
-        form_weight = (home_form + away_form)/2
-
-        # H2H weight
-        h2h_weight = sum([m.get("result_weight", 80) for m in h2h_data])/len(h2h_data) if h2h_data else 75
-
+        odds_weight = max(100/odds["Home"],100/odds["Draw"],100/odds["Away"])
+        # Form weight
+        form_weight = (home_form+away_form)/2
         # Goal trend weight
-        goal_weight = sum(goal_trend)/len(goal_trend) if goal_trend else 70
-
+        goal_weight = avg_goal*15
         # Combined confidence
-        combined = (0.4*odds_weight) + (0.3*form_weight) + (0.2*h2h_weight) + (0.1*goal_weight)
+        combined = (0.4*odds_weight) + (0.25*form_weight) + (0.2*h2h) + (0.15*goal_weight)
         return round(combined,1)
     except:
         return 0
 
 # -------------------------
-# Intelligent Match Analysis
+# Poisson-based Correct Score
+# -------------------------
+def poisson_scores(avg_home, avg_away):
+    max_goals = 3
+    scores = {}
+    for h in range(0,max_goals+1):
+        for a in range(0,max_goals+1):
+            prob = (math.exp(-avg_home)*avg_home**h/math.factorial(h)) * (math.exp(-avg_away)*avg_away**a/math.factorial(a))
+            scores[f"{h}-{a}"]=round(prob*100,1)
+    sorted_scores = sorted(scores.items(), key=lambda x:x[1], reverse=True)[:2]
+    return [s[0] for s in sorted_scores]
+
+# -------------------------
+# Intelligent Analysis
 # -------------------------
 def intelligent_analysis(match):
     home = match["teams"]["home"]["name"]
     away = match["teams"]["away"]["name"]
+    home_id = match["teams"]["home"]["id"]
+    away_id = match["teams"]["away"]["id"]
     fixture_id = match["fixture"]["id"]
 
-    # Fetch Odds
+    # Odds
     odds_raw = fetch_odds(fixture_id)
-    odds_list = {}
+    odds_list = {"Home":2.0,"Draw":3.0,"Away":4.0}
     if odds_raw:
         try:
             for book in odds_raw:
-                if book["bookmaker"]["name"].lower() == "bet365":
+                if book["bookmaker"]["name"].lower()=="bet365":
                     mw = book["bets"][0]["values"]
-                    odds_list = {"Home": float(mw[0]["odd"]), "Draw": float(mw[1]["odd"]), "Away": float(mw[2]["odd"])}
+                    odds_list = {"Home":float(mw[0]["odd"]),"Draw":float(mw[1]["odd"]),"Away":float(mw[2]["odd"])}
                     break
-        except: odds_list = {"Home":2.0,"Draw":3.0,"Away":4.0}
+        except: pass
 
-    # Team form last 5 matches (dummy data, replace with API stats if needed)
-    home_form = 85
-    away_form = 80
+    # Team form
+    home_form, avg_home_goals = fetch_team_form(home_id)
+    away_form, avg_away_goals = fetch_team_form(away_id)
 
-    # H2H data (dummy weights, can calculate from API)
-    h2h_data = [{"result_weight":90},{"result_weight":85},{"result_weight":80}]
-
-    # Dynamic goal trend (last 10 min goal chance)
-    goal_trend = [80,85,90]
+    # H2H
+    h2h_weight = fetch_h2h(home_id, away_id)
 
     # Confidence
-    confidence = calculate_confidence(odds_list, home_form, away_form, h2h_data, goal_trend)
-    if confidence < 85:
-        return None
+    confidence = calculate_confidence(odds_list, home_form, away_form, h2h_weight, (avg_home_goals+avg_away_goals)/2)
+    if confidence<85: return None
 
-    # Correct Score & BTTS Calculation (simplified logic)
-    top_correct_scores = ["2-1","1-1"]
-    btts = "Yes" if confidence>87 else "No"
+    # Correct Score
+    top_scores = poisson_scores(avg_home_goals, avg_away_goals)
 
-    analysis = {
-        "market": "Over 2.5 Goals",
-        "prediction": "Yes",
-        "confidence": confidence,
+    # BTTS
+    btts = "Yes" if avg_home_goals>0.8 and avg_away_goals>0.8 else "No"
+
+    # Last 10-min goal chance
+    last_10_prob = round((0.2*(avg_home_goals+avg_away_goals))*100,1)
+    if last_10_prob>100: last_10_prob=100
+
+    return {
+        "market":"Over 2.5 Goals",
+        "prediction":"Yes",
+        "confidence":confidence,
         "odds":"1.70-1.85",
-        "reason": f"Odds weight + Team form + H2H + Goal trend analyzed for {home} vs {away}",
-        "correct_scores": top_correct_scores,
-        "btts": btts,
-        "last_10_min_goal": max(goal_trend)
+        "reason":f"Real-time Odds + Team Form + H2H + Goal Trend analyzed for {home} vs {away}",
+        "correct_scores":top_scores,
+        "btts":btts,
+        "last_10_min_goal":last_10_prob
     }
-    return analysis
 
 # -------------------------
-# Format Telegram Message
+# Telegram Message
 # -------------------------
 def format_bet_msg(match, analysis):
     home = match["teams"]["home"]["name"]
@@ -167,7 +210,7 @@ def format_bet_msg(match, analysis):
         f"💰 Confidence Level: {analysis['confidence']}%\n"
         f"📊 Reasoning: {analysis['reason']}\n"
         f"🔥 Odds Range: {analysis['odds']}\n"
-        f"⚠️ Risk Note: Check injuries/cards before betting\n"
+        f"⚠️ Risk Note: Check injuries/cards\n"
         f"✅ Top Correct Scores: {', '.join(analysis['correct_scores'])}\n"
         f"✅ BTTS: {analysis['btts']}\n"
         f"✅ Last 10-Min Goal Chance: {analysis['last_10_min_goal']}%"
@@ -183,11 +226,8 @@ def auto_update_job():
             analysis = intelligent_analysis(match)
             if analysis:
                 msg = format_bet_msg(match, analysis)
-                try:
-                    bot.send_message(OWNER_CHAT_ID, msg)
-                    print(f"✅ Auto-update sent: {match['teams']['home']['name']} vs {match['teams']['away']['name']}")
-                except Exception as e:
-                    print(f"⚠️ Telegram send error: {e}")
+                try: bot.send_message(OWNER_CHAT_ID, msg)
+                except: pass
         time.sleep(300)
 
 threading.Thread(target=auto_update_job, daemon=True).start()
@@ -238,12 +278,13 @@ def smart_reply(message):
 # Start Flask + webhook
 # -------------------------
 if __name__ == "__main__":
-    domain = "https://football-auto-bot-production.up.railway.app"  # Update with your Railway domain
+    domain = "https://your-railway-domain.up.railway.app"  # Update with your Railway domain
     webhook_url = f"{domain}/{BOT_TOKEN}"
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)
     print(f"✅ Webhook set: {webhook_url}")
     app.run(host='0.0.0.0', port=8080)
+
 
 
 

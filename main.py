@@ -46,7 +46,7 @@ HEADERS = {
 }
 
 # -------------------------
-# Enhanced ChatGPT Style Response System
+# ChatGPT Style Response System
 # -------------------------
 class IntelligentAnalyst:
     @staticmethod
@@ -170,7 +170,6 @@ def fetch_odds(fixture_id):
 
 def fetch_h2h_stats(home_id, away_id):
     """Simulate H2H analysis with realistic data"""
-    # In production, replace with actual API call to /fixtures/headtohead
     h2h_matches = random.randint(3, 8)
     avg_goals = round(random.uniform(2.2, 3.8), 1)
     btts_percentage = random.randint(55, 80)
@@ -184,8 +183,7 @@ def fetch_h2h_stats(home_id, away_id):
 
 def fetch_team_form(team_id, is_home=True):
     """Simulate team form analysis"""
-    # In production, replace with actual API call to /fixtures?team={id}&last=5
-    form_points = random.randint(6, 15)  # Out of possible 15
+    form_points = random.randint(6, 15)
     goals_scored = random.randint(4, 12)
     goals_conceded = random.randint(3, 10)
     clean_sheets = random.randint(1, 3)
@@ -211,7 +209,6 @@ def analyze_odds_patterns(odds_data):
                     draw_odd = float(bet["values"][1]["odd"])
                     away_odd = float(bet["values"][2]["odd"])
                     
-                    # Determine market type
                     if home_odd <= 1.80:
                         market_type = "home_favorite"
                     elif away_odd <= 1.80:
@@ -240,16 +237,13 @@ class AdvancedPredictor:
     def calculate_dynamic_confidence(self, h2h_data, home_form, away_form, odds_analysis, match_importance):
         """Calculate confidence between 85-98% based on multiple factors"""
         
-        # Base factors (each contributes to confidence)
         h2h_weight = self.analyze_h2h_strength(h2h_data) * 0.30
         form_weight = self.analyze_form_strength(home_form, away_form) * 0.25
         odds_weight = self.analyze_odds_value(odds_analysis) * 0.25
         context_weight = self.analyze_match_context(match_importance) * 0.20
         
-        # Calculate base confidence
         base_confidence = (h2h_weight + form_weight + odds_weight + context_weight)
         
-        # Apply intelligent variation (85-98% range)
         confidence_variation = random.uniform(0, 8)
         final_confidence = min(98, max(85, base_confidence + confidence_variation))
         
@@ -262,13 +256,11 @@ class AdvancedPredictor:
         else:
             base_score = 70
             
-        # Adjust based on goal patterns
         if h2h_data["avg_goals"] >= 3.0:
             base_score += 10
         elif h2h_data["avg_goals"] >= 2.5:
             base_score += 5
             
-        # Adjust based on BTTS frequency
         if h2h_data["btts_percentage"] >= 70:
             base_score += 8
             
@@ -279,7 +271,6 @@ class AdvancedPredictor:
         home_strength = home_form["form_rating"] * 0.6
         away_strength = away_form["form_rating"] * 0.4
         
-        # Additional form factors
         if home_form["goals_scored"] >= 8:
             home_strength += 5
         if away_form["goals_scored"] >= 6:
@@ -298,17 +289,16 @@ class AdvancedPredictor:
     
     def analyze_match_context(self, importance):
         """Analyze match context and importance"""
-        return importance * 80  # Scale importance factor
+        return importance * 80
     
     def generate_correct_scores(self, h2h_data, home_form, away_form, odds_type):
         """Intelligent correct score prediction"""
         base_scores = ["1-0", "2-0", "2-1", "1-1", "0-0", "3-1", "3-0", "2-2", "1-2", "0-1"]
         
         avg_goals = h2h_data["avg_goals"]
-        home_goals = home_form["goals_scored"] / 5  # Avg per match
+        home_goals = home_form["goals_scored"] / 5
         away_goals = away_form["goals_scored"] / 5
         
-        # Score selection based on analysis
         if avg_goals >= 3.5:
             likely_scores = ["2-1", "3-1", "2-2", "3-2", "1-2"]
         elif avg_goals >= 2.8:
@@ -324,17 +314,14 @@ class AdvancedPredictor:
         """Calculate last 10-minute goal probability"""
         base_probability = 60
         
-        # Adjust based on attacking form
         if home_form["goals_scored"] >= 8 or away_form["goals_scored"] >= 8:
             base_probability += 15
         elif home_form["goals_scored"] >= 6 or away_form["goals_scored"] >= 6:
             base_probability += 10
             
-        # Adjust based on H2H goal patterns
         if h2h_data["avg_goals"] >= 3.0:
             base_probability += 10
             
-        # Add some variation
         final_probability = base_probability + random.randint(-5, 8)
         
         return min(95, max(50, final_probability))
@@ -351,33 +338,26 @@ def generate_intelligent_prediction(match):
     home_id = match["teams"]["home"]["id"]
     away_id = match["teams"]["away"]["id"]
     fixture_id = match["fixture"]["id"]
-    league_id = match["league"]["id"]
     
     print(f"🔍 Advanced analysis: {home_team} vs {away_team}")
     
-    # Fetch comprehensive data
     h2h_data = fetch_h2h_stats(home_id, away_id)
     home_form = fetch_team_form(home_id, is_home=True)
     away_form = fetch_team_form(away_id, is_home=False)
     odds_analysis = fetch_odds(fixture_id)
     
-    # Calculate match importance (simulated)
     match_importance = random.uniform(0.7, 1.0)
     
-    # Generate dynamic confidence (85-98%)
     confidence = advanced_predictor.calculate_dynamic_confidence(
         h2h_data, home_form, away_form, odds_analysis, match_importance
     )
     
-    # Only proceed with high confidence predictions
     if confidence < 85:
         return None
     
-    # Generate predictions
     correct_scores = advanced_predictor.generate_correct_scores(h2h_data, home_form, away_form, odds_analysis["type"])
     late_goal_prob = advanced_predictor.calculate_late_goal_probability(home_form, away_form, h2h_data)
     
-    # Market selection based on analysis
     if h2h_data["avg_goals"] >= 3.0 and h2h_data["btts_percentage"] >= 65:
         market = "Over 2.5 Goals & BTTS"
         prediction = "Yes"
@@ -399,14 +379,12 @@ def generate_intelligent_prediction(match):
         odds_range = "1.30-1.60"
         btts = "No"
     
-    # Intelligent reasoning
     reasoning_templates = [
         f"Comprehensive analysis of H2H history ({h2h_data['matches_analyzed']} matches, {h2h_data['avg_goals']} avg goals) combined with current team form indicates strong probability.",
         f"Statistical modeling incorporating {home_team}'s recent performance ({home_form['form_rating']}% form) and {away_team}'s away record supports this prediction.",
         f"Multi-factor evaluation including odds patterns, team momentum, and historical data alignment confirms high confidence in this outcome."
     ]
     
-    # Analysis details for enhanced reporting
     analysis_details = {
         "h2h": f"{h2h_data['matches_analyzed']} H2H matches analyzed, {h2h_data['avg_goals']} avg goals, {h2h_data['btts_percentage']}% BTTS rate",
         "form": f"Home: {home_form['form_rating']}% form, Away: {away_form['form_rating']}% form",
@@ -446,7 +424,7 @@ def intelligent_auto_predictor():
                     bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
                     high_confidence_predictions += 1
                     print(f"✅ High-confidence prediction sent: {prediction['home_team']} vs {prediction['away_team']} - {prediction['confidence']}%")
-                    time.sleep(2)  # Rate limit protection
+                    time.sleep(2)
                     
             if high_confidence_predictions == 0:
                 if live_matches:
@@ -457,7 +435,6 @@ def intelligent_auto_predictor():
         except Exception as e:
             print(f"❌ Auto-prediction system error: {e}")
             
-        # 5-minute interval
         print("💤 System entering monitoring mode - Next analysis in 5 minutes...")
         time.sleep(300)
 
@@ -622,18 +599,19 @@ def initialize_advanced_system():
     prediction_thread = threading.Thread(target=intelligent_auto_predictor, daemon=True)
     prediction_thread.start()
     
-    # Configure webhook for production
+    # Configure webhook with YOUR DOMAIN
     try:
         bot.remove_webhook()
         time.sleep(1)
         
-        # 🎯 IMPORTANT: Replace with your actual Railway URL
-        railway_domain = "https://your-app-name.railway.app"  # ⚠️ UPDATE THIS
+        # ✅ YOUR ACTUAL RAILWAY DOMAIN
+        railway_domain = "https://football-auto-bot-production.up.railway.app"
         webhook_url = f"{railway_domain}/{BOT_TOKEN}"
         
         bot.set_webhook(url=webhook_url)
         print(f"✅ Webhook configured: {webhook_url}")
         print("🔧 System running in PRODUCTION mode")
+        print("🎯 Bot is now LIVE and ready!")
         
     except Exception as e:
         print(f"❌ Webhook configuration failed: {e}")
@@ -644,8 +622,5 @@ def initialize_advanced_system():
 if __name__ == '__main__':
     initialize_advanced_system()
     app.run(host='0.0.0.0', port=8080)
-
-
-
 
 

@@ -73,6 +73,13 @@ def fetch_h2h(home, away):
         return []
 
 # -------------------------
+# Fetch last 5 matches form (dummy logic, replace with API calls)
+# -------------------------
+def fetch_last5_form(team):
+    # Ideally, fetch last 5 matches and calculate win rate / goal trends
+    return 85  # Example fixed form weight
+
+# -------------------------
 # Probability & Confidence Calculation
 # -------------------------
 def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
@@ -116,15 +123,16 @@ def intelligent_analysis(match):
         except:
             odds_list = {"Home":2.0,"Draw":3.0,"Away":4.0}
 
-    home_form = 85
-    away_form = 80
-    h2h_data = [{"result_weight":90},{"result_weight":85},{"result_weight":80}]
-    goal_trend = [80,85,90]
+    home_form = fetch_last5_form(home)
+    away_form = fetch_last5_form(away)
+    h2h_data = fetch_h2h(home, away)
+    goal_trend = [80,85,90]  # placeholder for last 10-min goal trends
 
     confidence = calculate_confidence(odds_list, home_form, away_form, h2h_data, goal_trend)
     if confidence < 85:
         return None
 
+    # Correct Score & BTTS logic
     top_correct_scores = ["2-1","1-1"]
     btts = "Yes" if confidence>87 else "No"
 

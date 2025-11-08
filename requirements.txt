@@ -1,10 +1,11 @@
 
 
+
 pyTelegramBotAPI==4.21.0
 requests==2.31.0
 Flask==2.3.3
 python-dotenv==1.0.0
 gunicorn==21.2.0
 
-
+web: gunicorn main:app --bind 0.0.0.0:$PORT
 

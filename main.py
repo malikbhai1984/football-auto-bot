@@ -169,8 +169,85 @@ def format_bet_msg(match, analysis):
         f"💰 Confidence Level: {analysis['confidence']}%\n"
         f"📊 Reasoning: {analysis['reason']}\n"
         f"🔥 Odds Range: {analysis['odds']}\n"
-        f"⚠️ Risk Note: Check injuries/cards before be
+        f"⚠️ Risk Note: Check injuries/cards before betting\n"
+        f"✅ Top Correct Scores: {', '.join(analysis['correct_scores'])}\n"
+        f"✅ BTTS: {analysis['btts']}\n"
+        f"✅ Last 10-Min Goal Chance: {analysis['last_10_min_goal']}%"
+    )
 
+# -------------------------
+# Auto-update job
+# -------------------------
+def auto_update_job():
+    while True:
+        matches = fetch_live_matches()
+        for match in matches:
+            analysis = intelligent_analysis(match)
+            if analysis:
+                try:
+                    bot.send_message(OWNER_CHAT_ID, format_bet_msg(match, analysis))
+                    print(f"✅ Auto-update sent: {match['teams']['home']['name']} vs {match['teams']['away']['name']}")
+                except Exception as e:
+                    print(f"⚠️ Telegram send error: {e}")
+        time.sleep(300)
+
+threading.Thread(target=auto_update_job, daemon=True).start()
+
+# -------------------------
+# Webhook
+# -------------------------
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    try:
+        update = telebot.types.Update.de_json(request.data.decode('utf-8'))
+        bot.process_new_updates([update])
+    except Exception as e:
+        print(f"⚠️ Error: {e}")
+    return 'OK', 200
+
+@app.route('/')
+def home():
+    return f"⚽ {BOT_NAME} is running perfectly!", 200
+
+# -------------------------
+# Telegram Handlers (Intelligent)
+# -------------------------
+@bot.message_handler(commands=['start','hello'])
+def start(message):
+    bot.reply_to(message, f"⚽ {BOT_NAME} is live!\nWelcome, {message.from_user.first_name}! ✅")
+
+@bot.message_handler(func=lambda msg: True)
+def smart_reply(message):
+    text = message.text.lower().strip()
+    if any(x in text for x in ["hi","hello"]):
+        bot.reply_to(message,"👋 Hello Malik Bhai! Intelligent Bot is online and ready to predict matches with 85%+ confidence ✅")
+    elif any(x in text for x in ["update","live","who will win","over 2.5","btts","correct score"]):
+        matches = fetch_live_matches()
+        if not matches:
+            bot.reply_to(message,"🤖 No live matches right now. Auto-update will notify you when a high-confidence bet is available!")
+        else:
+            sent = False
+            for match in matches:
+                analysis = intelligent_analysis(match)
+                if analysis:
+                    bot.reply_to(message, format_bet_msg(match, analysis))
+                    sent = True
+                    break
+            if not sent:
+                bot.reply_to(message,"🤖 Matches are live but no 85%+ confident bet found yet. Auto-update will keep you posted!")
+    else:
+        bot.reply_to(message,"🤖 Malik Bhai Intelligent Bot is online! Ask me about live matches, predictions, Over 2.5, BTTS, or correct scores. I reply smartly with dynamic analysis ✅")
+
+# -------------------------
+# Start Flask + webhook
+# -------------------------
+if __name__=="__main__":
+    domain = "https://football-auto-bot-production.up.railway.app"
+    webhook_url = f"{domain}/{BOT_TOKEN}"
+    bot.remove_webhook()
+    bot.set_webhook(url=webhook_url)
+    print(f"✅ Webhook set: {webhook_url}")
+    app.run(host='0.0.0.0', port=8080)
 
 
 

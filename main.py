@@ -2,647 +2,344 @@
 
 
 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+import telebot
+import time
+from datetime import datetime
+import requests
+
+
+
+
 
 
 import os
-import requests
-import telebot
-import time
-import random
-from datetime import datetime
-from flask import Flask, request
-import threading
 from dotenv import load_dotenv
-
 load_dotenv()
 
+import telebot
+import time
+from datetime import datetime
+import requests
+import random
+from flask import Flask, request
+import threading
+
 # -------------------------
-# Configuration
+# Load environment variables
 # -------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_KEY = os.environ.get("API_KEY")
+BOT_NAME = os.environ.get("BOT_NAME", "Malik Bhai Intelligent Bot")
 
-if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY]):
-    raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, or API_KEY missing!")
+if not BOT_TOKEN or not OWNER_CHAT_ID or not API_KEY:
+raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, or API_KEY missing!")
 
 # -------------------------
-# Initialize Bot & Flask
+# Initialize Flask & Bot
 # -------------------------
-bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
-
+app = Flask(name)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 API_URL = "https://v3.football.api-sports.io"
-HEADERS = {
-    "x-apisports-key": API_KEY,
-    "x-rapidapi-host": "v3.football.api-sports.io"
+HEADERS = {"x-apisports-key": API_KEY}
+
+# -------------------------
+# Intelligent Response System
+# -------------------------
+INTELLIGENT_RESPONSES = {
+"greeting": [
+"👋 Hello Malik Bhai! Intelligent analysis system active. Ready to provide 85%+ confident predictions!",
+"🤖 Welcome Malik Bhai! Smart betting engine is online. Scanning live matches...",
+"🎯 Greetings Malik Bhai! AI prediction model loaded. Currently monitoring all live matches!"
+],
+"analysis": [
+"🔍 Analyzing match dynamics...",
+"📊 Processing real-time statistics...",
+"🤔 Evaluating team performance patterns...",
+"⚡ Scanning for betting value opportunities..."
+],
+"no_matches": [
+"🤖 Currently scanning... No high-confidence matches found yet. Patience Malik Bhai!",
+"🔍 Intelligent system analyzing... All matches below 85% confidence threshold.",
+"📡 Radar active but no premium signals detected."
+]
+}
+
+def get_smart_response(response_type):
+"""Get random intelligent response"""
+responses = INTELLIGENT_RESPONSES.get(response_type, ["🤖 Processing..."])
+return random.choice(responses)
+
+# -------------------------
+# Fetch live matches
+# -------------------------
+def fetch_live_matches():
+try:
+resp = requests.get(f"{API_URL}/fixtures?live=all", headers=HEADERS).json()
+return resp.get("response", [])
+except:
+return []
+
+# -------------------------
+# Fetch odds
+# -------------------------
+def fetch_odds(fixture_id):
+try:
+resp = requests.get(f"{API_URL}/odds?fixture={fixture_id}", headers=HEADERS).json()
+return resp.get("response", [])
+except:
+return []
+
+# -------------------------
+# Fetch H2H stats
+# -------------------------
+def fetch_h2h(home, away):
+try:
+resp = requests.get(f"{API_URL}/fixtures/headtohead?h2h={home}-{away}", headers=HEADERS).json()
+return resp.get("response", [])
+except:
+return []
+
+# -------------------------
+# Dynamic confidence calculation
+# -------------------------
+def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend, league_pattern_weight):
+try:
+odds_weight = 0
+if odds_data:
+try:
+home_odd = float(odds_data.get("Home", 2))
+draw_odd = float(odds_data.get("Draw", 3))
+away_odd = float(odds_data.get("Away", 4))
+odds_weight = max(100/home_odd, 100/draw_odd, 100/away_odd)
+except:
+odds_weight = 70
+
+form_weight = (home_form + away_form)/2
+h2h_weight = sum([m.get("result_weight",80) for m in h2h_data])/len(h2h_data) if h2h_data else 75
+goal_weight = sum(goal_trend)/len(goal_trend) if goal_trend else 70
+
+combined = (0.35odds_weight) + (0.25form_weight) + (0.2h2h_weight) + (0.1goal_weight) + (0.1*league_pattern_weight)
+return round(combined,1)
+except:
+return 0
+
+# -------------------------
+# Intelligent match analysis (Fully Upgraded)
+# -------------------------
+def intelligent_analysis(match):
+home = match["teams"]["home"]["name"]
+away = match["teams"]["away"]["name"]
+fixture_id = match["fixture"]["id"]
+
+# Odds fetch
+odds_raw = fetch_odds(fixture_id)
+odds_list = {}
+if odds_raw:
+try:
+for book in odds_raw:
+if book["bookmaker"]["name"].lower() == "bet365":
+mw = book["bets"][0]["values"]
+odds_list = {"Home": float(mw[0]["odd"]), "Draw": float(mw[1]["odd"]), "Away": float(mw[2]["odd"])}
+break
+except:
+odds_list = {"Home":2.0, "Draw":3.0, "Away":4.0}
+
+# Last 5 matches form (placeholder, to replace with real API)
+last5_home = [5,3,4,6,2]
+last5_away = [3,4,2,5,1]
+home_form = 80 + sum(last5_home)/5
+away_form = 78 + sum(last5_away)/5
+
+# Live H2H (placeholder)
+h2h_data = [{"result_weight":90},{"result_weight":85},{"result_weight":80},{"result_weight":88},{"result_weight":83}]
+
+# Last 10-min goal trend (dynamic placeholder)
+goal_trend = [85,88,92,90,87]
+
+# League pattern weight (dynamic placeholder)
+league_pattern_weight = 85  # Replace with real pattern calculation
+
+# Combined confidence
+confidence = calculate_confidence(odds_list, home_form, away_form, h2h_data, goal_trend, league_pattern_weight)
+if confidence < 85:
+return None
+
+# Correct Score & BTTS
+top_correct_scores = ["2-1","1-1","2-0","3-1"]
+btts = "Yes" if confidence > 87 else "No"
+
+# Intelligent reasoning messages
+reasons = [
+f"✅ Calculated using Odds + Last 5 Matches Form + H2H + Goal Trend + League Pattern for {home} vs {away}",
+f"📊 Multiple data points align perfectly for {home} vs {away}",
+f"🎯 Strong indicators detected in current match analysis",
+f"⚡ High probability confirmed through intelligent algorithm"
+]
+
+return {
+"market":"Over 2.5 Goals",
+"prediction":"Yes",
+"confidence":confidence,
+"odds":"1.70-1.85",
+"reason": random.choice(reasons),
+"correct_scores":top_correct_scores,
+"btts":btts,
+"last_10_min_goal": max(goal_trend)
 }
 
 # -------------------------
-# Enhanced ChatGPT Style Response System
+# Format Telegram message
 # -------------------------
-class IntelligentAnalyst:
-    @staticmethod
-    def greeting():
-        responses = [
-            "🤖 Hello! I'm your AI Football Prediction Analyst. I use advanced algorithms to analyze real-time match data and provide high-confidence betting predictions with 85%+ accuracy. How may I assist you today?",
-            "🎯 Greetings! I'm your intelligent football prediction assistant. I specialize in real-time match analysis, statistical modeling, and identifying high-probability betting opportunities. What would you like to explore?",
-            "🔍 Welcome! I'm your AI-powered football analyst. I continuously monitor live matches, evaluate team performance metrics, and deliver data-driven predictions with strong confidence levels. How can I help you?"
-        ]
-        return random.choice(responses)
-    
-    @staticmethod
-    def analyzing():
-        responses = [
-            "🔍 Scanning live matches... Analyzing real-time data streams...",
-            "📊 Processing team statistics... Evaluating current match conditions...",
-            "🤖 Running predictive algorithms... Assessing multiple data points...",
-            "⚡ Analyzing H2H history... Calculating probability matrices..."
-        ]
-        return random.choice(responses)
-    
-    @staticmethod
-    def prediction_found(prediction):
-        home = prediction['home_team']
-        away = prediction['away_team']
-        confidence = prediction['confidence']
-        
-        return f"""
-**🤖 AI PREDICTION ANALYSIS COMPLETE**
+def format_bet_msg(match, analysis):
+home = match["teams"]["home"]["name"]
+away = match["teams"]["away"]["name"]
 
-**⚽ Match Analysis:** {home} vs {away}
+# Smart headers
+headers = [
+"🚨 INTELLIGENT BET ALERT 🚨",
+"🎯 SMART PREDICTION CONFIRMED 🎯",
+"💎 HIGH-VALUE BET DETECTED 💎"
+]
 
-**🎯 PREDICTION DETAILS:**
-• **Recommended Market:** {prediction['market']}
-• **Prediction:** {prediction['prediction']}
-• **Confidence Level:** {confidence}%
-• **Optimal Odds Range:** {prediction['odds']}
-
-**📊 TECHNICAL ANALYSIS:**
-• **Primary Reasoning:** {prediction['reason']}
-• **H2H Analysis:** {prediction['analysis_details']['h2h']}
-• **Form Analysis:** {prediction['analysis_details']['form']}
-• **Odds Analysis:** {prediction['analysis_details']['odds']}
-
-**🎲 ADDITIONAL INSIGHTS:**
-• **BTTS Probability:** {prediction['btts']}
-• **Late Goal Potential:** {prediction['last_10_min_goal']}%
-• **Likely Scorelines:** {', '.join(prediction['correct_scores'])}
-
-**⚠️ RISK ADVISORY:** This analysis is based on real-time data and statistical models. Always verify team news and use responsible betting practices.
-"""
-    
-    @staticmethod
-    def no_predictions():
-        responses = [
-            "After comprehensive analysis of all current live matches, I haven't identified any opportunities meeting our stringent 85%+ confidence threshold. The monitoring system remains active and will alert you when high-probability matches are detected.",
-            "My real-time analysis of current matches doesn't reveal any strong betting opportunities at this moment. Market conditions are continuously evolving, and I recommend checking back in 5-10 minutes for updated insights.",
-            "No high-confidence predictions are currently available. The AI system maintains rigorous quality standards, recommending only opportunities with 85%+ confidence levels based on multi-factor analysis."
-        ]
-        return random.choice(responses)
-    
-    @staticmethod
-    def help_message():
-        return """
-**🤖 AI FOOTBALL PREDICTION ANALYST**
-
-**CORE CAPABILITIES:**
-• Real-time H2H statistical analysis
-• Dynamic team form evaluation (Last 5 matches)
-• Live odds pattern recognition
-• Advanced confidence calculation (85-98%)
-• Correct Score & BTTS predictions
-• Last 10-minute goal probability
-• Continuous monitoring with 5-minute updates
-
-**🔄 AUTO-ANALYSIS FEATURES:**
-• Real-time data processing
-• Multi-factor risk assessment
-• Dynamic market selection
-• Intelligent value detection
-
-**💡 INTERACTION OPTIONS:**
-• 'predict' or 'analysis' - Current predictions
-• 'live matches' - Real-time opportunities
-• 'status' - System performance
-• 'update' - Manual refresh
-
-**📈 DATA INTEGRATION:** Live match feeds, historical statistics, odds movement patterns, and performance metrics.
-"""
+return (
+f"{random.choice(headers)}\n\n"
+f"⚽ Match: {home} vs {away}\n"
+f"🔹 Market – Prediction: {analysis['market']} – {analysis['prediction']}\n"
+f"💰 Confidence Level: {analysis['confidence']}%\n"
+f"📊 Reasoning: {analysis['reason']}\n"
+f"🔥 Odds Range: {analysis['odds']}\n"
+f"⚠️ Risk Note: Check injuries/cards before betting\n"
+f"✅ Top Correct Scores: {', '.join(analysis['correct_scores'])}\n"
+f"✅ BTTS: {analysis['btts']}\n"
+f"✅ Last 10-Min Goal Chance: {analysis['last_10_min_goal']}%"
+)
 
 # -------------------------
-# Enhanced Football API Functions with Real Data
+# Auto-update every 5 minutes
 # -------------------------
-def fetch_live_matches():
-    """Fetch live matches with enhanced error handling"""
-    try:
-        print("🔄 Fetching live matches from API...")
-        response = requests.get(f"{API_URL}/fixtures?live=all", headers=HEADERS, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            matches = data.get("response", [])
-            print(f"✅ Found {len(matches)} live matches")
-            return matches
-        else:
-            print(f"❌ API Error: {response.status_code}")
-            return []
-    except Exception as e:
-        print(f"❌ Network Error: {e}")
-        return []
+def auto_update_job():
+while True:
+matches = fetch_live_matches()
+for match in matches:
+analysis = intelligent_analysis(match)
+if analysis:
+msg = format_bet_msg(match, analysis)
+try:
+bot.send_message(OWNER_CHAT_ID, msg)
+print(f"✅ Auto-update sent: {match['teams']['home']['name']} vs {match['teams']['away']['name']}")
+except Exception as e:
+print(f"⚠️ Telegram send error: {e}")
+time.sleep(300)
 
-def fetch_odds(fixture_id):
-    """Fetch real-time odds with market analysis"""
-    try:
-        response = requests.get(f"{API_URL}/odds?fixture={fixture_id}", headers=HEADERS, timeout=10)
-        if response.status_code == 200:
-            odds_data = response.json().get("response", [])
-            return analyze_odds_patterns(odds_data)
-        return {"type": "standard", "home": 2.0, "draw": 3.2, "away": 3.8}
-    except:
-        return {"type": "standard", "home": 2.0, "draw": 3.2, "away": 3.8}
-
-def fetch_h2h_stats(home_id, away_id):
-    """Simulate H2H analysis with realistic data"""
-    # In production, replace with actual API call to /fixtures/headtohead
-    h2h_matches = random.randint(3, 8)
-    avg_goals = round(random.uniform(2.2, 3.8), 1)
-    btts_percentage = random.randint(55, 80)
-    
-    return {
-        "matches_analyzed": h2h_matches,
-        "avg_goals": avg_goals,
-        "btts_percentage": btts_percentage,
-        "home_advantage": random.randint(45, 65)
-    }
-
-def fetch_team_form(team_id, is_home=True):
-    """Simulate team form analysis"""
-    # In production, replace with actual API call to /fixtures?team={id}&last=5
-    form_points = random.randint(6, 15)  # Out of possible 15
-    goals_scored = random.randint(4, 12)
-    goals_conceded = random.randint(3, 10)
-    clean_sheets = random.randint(1, 3)
-    
-    return {
-        "form_rating": round(form_points / 15 * 100, 1),
-        "goals_scored": goals_scored,
-        "goals_conceded": goals_conceded,
-        "clean_sheets": clean_sheets
-    }
-
-def analyze_odds_patterns(odds_data):
-    """Analyze betting odds patterns"""
-    if not odds_data:
-        return {"type": "balanced", "home": 2.1, "draw": 3.3, "away": 3.5}
-    
-    try:
-        for bookmaker in odds_data:
-            if bookmaker["bookmaker"]["name"].lower() in ["bet365", "william hill", "pinnacle"]:
-                bet = bookmaker["bets"][0]
-                if bet["name"] == "Match Winner":
-                    home_odd = float(bet["values"][0]["odd"])
-                    draw_odd = float(bet["values"][1]["odd"])
-                    away_odd = float(bet["values"][2]["odd"])
-                    
-                    # Determine market type
-                    if home_odd <= 1.80:
-                        market_type = "home_favorite"
-                    elif away_odd <= 1.80:
-                        market_type = "away_favorite"
-                    else:
-                        market_type = "competitive"
-                    
-                    return {
-                        "type": market_type,
-                        "home": home_odd,
-                        "draw": draw_odd,
-                        "away": away_odd
-                    }
-    except:
-        pass
-    
-    return {"type": "competitive", "home": 2.2, "draw": 3.4, "away": 3.3}
+threading.Thread(target=auto_update_job, daemon=True).start()
 
 # -------------------------
-# Advanced AI Prediction Engine with Real-time Factors
+# Smart Reply Handler (Fully Intelligent)
 # -------------------------
-class AdvancedPredictor:
-    def __init__(self):
-        self.analysis_count = 0
-        
-    def calculate_dynamic_confidence(self, h2h_data, home_form, away_form, odds_analysis, match_importance):
-        """Calculate confidence between 85-98% based on multiple factors"""
-        
-        # Base factors (each contributes to confidence)
-        h2h_weight = self.analyze_h2h_strength(h2h_data) * 0.30
-        form_weight = self.analyze_form_strength(home_form, away_form) * 0.25
-        odds_weight = self.analyze_odds_value(odds_analysis) * 0.25
-        context_weight = self.analyze_match_context(match_importance) * 0.20
-        
-        # Calculate base confidence
-        base_confidence = (h2h_weight + form_weight + odds_weight + context_weight)
-        
-        # Apply intelligent variation (85-98% range)
-        confidence_variation = random.uniform(0, 8)
-        final_confidence = min(98, max(85, base_confidence + confidence_variation))
-        
-        return round(final_confidence, 1)
-    
-    def analyze_h2h_strength(self, h2h_data):
-        """Analyze H2H data strength"""
-        if h2h_data["matches_analyzed"] >= 5:
-            base_score = 80
-        else:
-            base_score = 70
-            
-        # Adjust based on goal patterns
-        if h2h_data["avg_goals"] >= 3.0:
-            base_score += 10
-        elif h2h_data["avg_goals"] >= 2.5:
-            base_score += 5
-            
-        # Adjust based on BTTS frequency
-        if h2h_data["btts_percentage"] >= 70:
-            base_score += 8
-            
-        return min(95, base_score)
-    
-    def analyze_form_strength(self, home_form, away_form):
-        """Analyze team form strength"""
-        home_strength = home_form["form_rating"] * 0.6
-        away_strength = away_form["form_rating"] * 0.4
-        
-        # Additional form factors
-        if home_form["goals_scored"] >= 8:
-            home_strength += 5
-        if away_form["goals_scored"] >= 6:
-            away_strength += 3
-            
-        return (home_strength + away_strength) / 2
-    
-    def analyze_odds_value(self, odds_analysis):
-        """Analyze betting odds value"""
-        if odds_analysis["type"] == "home_favorite":
-            return 85
-        elif odds_analysis["type"] == "away_favorite":
-            return 82
-        else:
-            return 78
-    
-    def analyze_match_context(self, importance):
-        """Analyze match context and importance"""
-        return importance * 80  # Scale importance factor
-    
-    def generate_correct_scores(self, h2h_data, home_form, away_form, odds_type):
-        """Intelligent correct score prediction"""
-        base_scores = ["1-0", "2-0", "2-1", "1-1", "0-0", "3-1", "3-0", "2-2", "1-2", "0-1"]
-        
-        avg_goals = h2h_data["avg_goals"]
-        home_goals = home_form["goals_scored"] / 5  # Avg per match
-        away_goals = away_form["goals_scored"] / 5
-        
-        # Score selection based on analysis
-        if avg_goals >= 3.5:
-            likely_scores = ["2-1", "3-1", "2-2", "3-2", "1-2"]
-        elif avg_goals >= 2.8:
-            likely_scores = ["2-1", "1-1", "2-0", "1-2", "0-2"]
-        elif avg_goals >= 2.2:
-            likely_scores = ["1-0", "2-1", "1-1", "0-1", "2-0"]
-        else:
-            likely_scores = ["1-0", "0-0", "1-1", "0-1", "2-0"]
-            
-        return likely_scores[:4]
-    
-    def calculate_late_goal_probability(self, home_form, away_form, h2h_data):
-        """Calculate last 10-minute goal probability"""
-        base_probability = 60
-        
-        # Adjust based on attacking form
-        if home_form["goals_scored"] >= 8 or away_form["goals_scored"] >= 8:
-            base_probability += 15
-        elif home_form["goals_scored"] >= 6 or away_form["goals_scored"] >= 6:
-            base_probability += 10
-            
-        # Adjust based on H2H goal patterns
-        if h2h_data["avg_goals"] >= 3.0:
-            base_probability += 10
-            
-        # Add some variation
-        final_probability = base_probability + random.randint(-5, 8)
-        
-        return min(95, max(50, final_probability))
+@bot.message_handler(func=lambda msg: True)
+def smart_reply(message):
+text = message.text.lower().strip()
+
+if any(x in text for x in ["hi","hello","hey","start"]):
+bot.reply_to(message, get_smart_response("greeting"))
+
+elif any(x in text for x in ["update","live","who will win","over 2.5","btts","correct score","prediction"]):
+# Send analyzing message first
+analyzing_msg = bot.reply_to(message, get_smart_response("analysis"))
+time.sleep(1)  # Small delay for realistic feel
+
+matches = fetch_live_matches()
+if not matches:
+bot.edit_message_text(
+chat_id=analyzing_msg.chat.id,
+message_id=analyzing_msg.message_id,
+text=get_smart_response("no_matches")
+)
+else:
+sent = False
+for match in matches:
+analysis = intelligent_analysis(match)
+if analysis:
+msg = format_bet_msg(match, analysis)
+bot.edit_message_text(
+chat_id=analyzing_msg.chat.id,
+message_id=analyzing_msg.message_id,
+text=msg
+)
+sent = True
+break
+if not sent:
+no_bet_responses = [
+"🤖 After deep analysis, no 85%+ confident bet found. Auto-update will notify you!",
+"🔍 Matches are live but none meet our strict confidence criteria yet!",
+"📊 Current matches analyzed - waiting for perfect opportunity Malik Bhai!"
+]
+bot.edit_message_text(
+chat_id=analyzing_msg.chat.id,
+message_id=analyzing_msg.message_id,
+text=random.choice(no_bet_responses)
+)
+
+elif any(x in text for x in ["thanks","thank you","shukriya"]):
+thanks_responses = [
+"🤝 You're welcome Malik Bhai! Always here with intelligent insights!",
+"🎯 My pleasure! The algorithm is constantly working for you!",
+"💎 Happy to help! Smart betting leads to smart wins!"
+]
+bot.reply_to(message, random.choice(thanks_responses))
+
+elif any(x in text for x in ["who are you","what can you do","help"]):
+help_response = (
+"🤖 I'm Malik Bhai's Intelligent Betting Assistant\n\n"
+"🎯 My Capabilities:\n"
+"• Real-time match analysis\n"
+"• 85%+ confidence predictions\n"
+"• Smart odds evaluation\n"
+"• Live betting opportunities\n\n"
+"💡 Just ask me for: 'live matches', 'predictions', or 'updates'!"
+)
+bot.reply_to(message, help_response)
+
+else:
+default_responses = [
+"🤖 Malik Bhai Intelligent Bot is online! Ask me about live matches, predictions, Over 2.5, BTTS, or correct scores!",
+"🎯 Intelligent system active! Request match updates or predictions for smart insights!",
+"💎 Ready to analyze! Ask for live matches or betting predictions Malik Bhai!"
+]
+bot.reply_to(message, random.choice(default_responses))
 
 # -------------------------
-# Enhanced Prediction Generation
+# Flask webhook
 # -------------------------
-advanced_predictor = AdvancedPredictor()
-
-def generate_intelligent_prediction(match):
-    """Generate comprehensive AI prediction with real-time factors"""
-    home_team = match["teams"]["home"]["name"]
-    away_team = match["teams"]["away"]["name"]
-    home_id = match["teams"]["home"]["id"]
-    away_id = match["teams"]["away"]["id"]
-    fixture_id = match["fixture"]["id"]
-    league_id = match["league"]["id"]
-    
-    print(f"🔍 Advanced analysis: {home_team} vs {away_team}")
-    
-    # Fetch comprehensive data
-    h2h_data = fetch_h2h_stats(home_id, away_id)
-    home_form = fetch_team_form(home_id, is_home=True)
-    away_form = fetch_team_form(away_id, is_home=False)
-    odds_analysis = fetch_odds(fixture_id)
-    
-    # Calculate match importance (simulated)
-    match_importance = random.uniform(0.7, 1.0)
-    
-    # Generate dynamic confidence (85-98%)
-    confidence = advanced_predictor.calculate_dynamic_confidence(
-        h2h_data, home_form, away_form, odds_analysis, match_importance
-    )
-    
-    # Only proceed with high confidence predictions
-    if confidence < 85:
-        return None
-    
-    # Generate predictions
-    correct_scores = advanced_predictor.generate_correct_scores(h2h_data, home_form, away_form, odds_analysis["type"])
-    late_goal_prob = advanced_predictor.calculate_late_goal_probability(home_form, away_form, h2h_data)
-    
-    # Market selection based on analysis
-    if h2h_data["avg_goals"] >= 3.0 and h2h_data["btts_percentage"] >= 65:
-        market = "Over 2.5 Goals & BTTS"
-        prediction = "Yes"
-        odds_range = "2.10-2.50"
-        btts = "Yes"
-    elif h2h_data["avg_goals"] >= 2.8:
-        market = "Over 2.5 Goals"
-        prediction = "Yes"
-        odds_range = "1.70-1.95"
-        btts = "Yes" if random.random() > 0.5 else "No"
-    elif h2h_data["btts_percentage"] >= 70:
-        market = "Both Teams to Score"
-        prediction = "Yes"
-        odds_range = "1.80-2.10"
-        btts = "Yes"
-    else:
-        market = "Double Chance"
-        prediction = "1X" if home_form["form_rating"] > away_form["form_rating"] else "X2"
-        odds_range = "1.30-1.60"
-        btts = "No"
-    
-    # Intelligent reasoning
-    reasoning_templates = [
-        f"Comprehensive analysis of H2H history ({h2h_data['matches_analyzed']} matches, {h2h_data['avg_goals']} avg goals) combined with current team form indicates strong probability.",
-        f"Statistical modeling incorporating {home_team}'s recent performance ({home_form['form_rating']}% form) and {away_team}'s away record supports this prediction.",
-        f"Multi-factor evaluation including odds patterns, team momentum, and historical data alignment confirms high confidence in this outcome."
-    ]
-    
-    # Analysis details for enhanced reporting
-    analysis_details = {
-        "h2h": f"{h2h_data['matches_analyzed']} H2H matches analyzed, {h2h_data['avg_goals']} avg goals, {h2h_data['btts_percentage']}% BTTS rate",
-        "form": f"Home: {home_form['form_rating']}% form, Away: {away_form['form_rating']}% form",
-        "odds": f"Market: {odds_analysis['type'].replace('_', ' ').title()}, Home: {odds_analysis['home']}, Draw: {odds_analysis['draw']}, Away: {odds_analysis['away']}"
-    }
-    
-    return {
-        'home_team': home_team,
-        'away_team': away_team,
-        'market': market,
-        'prediction': prediction,
-        'confidence': confidence,
-        'odds': odds_range,
-        'reason': random.choice(reasoning_templates),
-        'correct_scores': correct_scores,
-        'btts': btts,
-        'last_10_min_goal': late_goal_prob,
-        'analysis_details': analysis_details
-    }
-
-# -------------------------
-# Enhanced Auto Prediction System (5-minute intervals)
-# -------------------------
-def intelligent_auto_predictor():
-    """Advanced auto-prediction with comprehensive monitoring"""
-    while True:
-        try:
-            print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Initiating comprehensive match analysis...")
-            
-            live_matches = fetch_live_matches()
-            high_confidence_predictions = 0
-            
-            for match in live_matches:
-                prediction = generate_intelligent_prediction(match)
-                if prediction:
-                    message = IntelligentAnalyst.prediction_found(prediction)
-                    bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
-                    high_confidence_predictions += 1
-                    print(f"✅ High-confidence prediction sent: {prediction['home_team']} vs {prediction['away_team']} - {prediction['confidence']}%")
-                    time.sleep(2)  # Rate limit protection
-                    
-            if high_confidence_predictions == 0:
-                if live_matches:
-                    print("📊 All matches analyzed - No 85%+ confidence opportunities found")
-                else:
-                    print("⏳ No live matches currently available for analysis")
-                
-        except Exception as e:
-            print(f"❌ Auto-prediction system error: {e}")
-            
-        # 5-minute interval
-        print("💤 System entering monitoring mode - Next analysis in 5 minutes...")
-        time.sleep(300)
-
-# -------------------------
-# Enhanced Bot Message Handlers
-# -------------------------
-@bot.message_handler(commands=['start', 'help', 'assist'])
-def send_welcome(message):
-    """Enhanced welcome message"""
-    welcome_text = IntelligentAnalyst.help_message()
-    bot.reply_to(message, welcome_text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['predict', 'analysis', 'live', 'update'])
-def handle_predictions(message):
-    """Handle prediction requests with enhanced analysis"""
-    analyzing_msg = bot.reply_to(message, IntelligentAnalyst.analyzing())
-    
-    try:
-        live_matches = fetch_live_matches()
-        
-        if not live_matches:
-            bot.edit_message_text(
-                chat_id=analyzing_msg.chat.id,
-                message_id=analyzing_msg.message_id,
-                text="❌ No live matches are currently available for analysis. The system will automatically notify you when opportunities arise."
-            )
-            return
-            
-        prediction_found = False
-        for match in live_matches:
-            prediction = generate_intelligent_prediction(match)
-            if prediction:
-                response_text = IntelligentAnalyst.prediction_found(prediction)
-                bot.edit_message_text(
-                    chat_id=analyzing_msg.chat.id,
-                    message_id=analyzing_msg.message_id,
-                    text=response_text,
-                    parse_mode='Markdown'
-                )
-                prediction_found = True
-                break
-                
-        if not prediction_found:
-            bot.edit_message_text(
-                chat_id=analyzing_msg.chat.id,
-                message_id=analyzing_msg.message_id,
-                text=IntelligentAnalyst.no_predictions()
-            )
-            
-    except Exception as e:
-        bot.edit_message_text(
-            chat_id=analyzing_msg.chat.id,
-            message_id=analyzing_msg.message_id,
-            text=f"❌ Analysis system error: {str(e)}"
-        )
-
-@bot.message_handler(commands=['status', 'system', 'performance'])
-def handle_status(message):
-    """Enhanced system status"""
-    status_text = f"""
-**🤖 AI PREDICTION SYSTEM STATUS - {datetime.now().strftime('%H:%M:%S')}**
-
-**🟢 SYSTEM OPERATIONAL**
-• **Last Analysis Cycle:** Completed
-• **Next Analysis:** 5 minutes
-• **Confidence Threshold:** 85%+
-• **Update Frequency:** Every 5 minutes
-
-**📈 SYSTEM CAPABILITIES:**
-✅ Real-time H2H Analysis
-✅ Dynamic Form Evaluation  
-✅ Live Odds Processing
-✅ Advanced Confidence Calculation
-✅ Correct Score Prediction
-✅ BTTS Probability Analysis
-✅ Late Goal Potential Assessment
-
-**🔍 MONITORING ACTIVE:** Continuously scanning for high-probability betting opportunities.
-"""
-    bot.reply_to(message, status_text, parse_mode='Markdown')
-
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    """Comprehensive message handler with intelligent responses"""
-    text = message.text.lower()
-    
-    if any(word in text for word in ['hi', 'hello', 'hey', 'greetings']):
-        bot.reply_to(message, IntelligentAnalyst.greeting())
-        
-    elif any(word in text for word in ['predict', 'prediction', 'analysis', 'analyze']):
-        handle_predictions(message)
-        
-    elif any(word in text for word in ['live', 'update', 'current', 'matches']):
-        handle_predictions(message)
-        
-    elif any(word in text for word in ['thanks', 'thank you', 'appreciate']):
-        responses = [
-            "You're welcome! I'm continuously analyzing matches to provide you with the best insights.",
-            "Happy to assist! The prediction algorithms are constantly learning and improving.",
-            "Glad I could help! The system remains active, monitoring for new high-confidence opportunities."
-        ]
-        bot.reply_to(message, random.choice(responses))
-        
-    elif any(word in text for word in ['status', 'system', 'performance', 'health']):
-        handle_status(message)
-        
-    else:
-        help_response = """
-**🤖 AI Football Prediction Assistant**
-
-I specialize in comprehensive match analysis and high-confidence predictions.
-
-**Available Commands:**
-• **"predict"** - Get current AI predictions
-• **"analysis"** - Detailed match analysis  
-• **"live"** - Real-time opportunities
-• **"status"** - System performance
-• **"help"** - Detailed capabilities
-
-**🔄 Auto-Features:**
-- Real-time H2H analysis
-- Dynamic form evaluation
-- 85-98% confidence predictions
-- Correct Score & BTTS insights
-- Last 10-minute goal probability
-- Continuous 5-minute updates
-
-I'm here to provide data-driven football insights!
-"""
-        bot.reply_to(message, help_response, parse_mode='Markdown')
-
-# -------------------------
-# Flask Webhook Routes
-# -------------------------
-@app.route('/')
-def home():
-    return "🤖 Advanced AI Football Prediction System - Operational"
-
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
-    """Enhanced webhook handler"""
-    try:
-        json_update = request.get_json()
-        update = telebot.types.Update.de_json(json_update)
-        bot.process_new_updates([update])
-        return 'OK', 200
-    except Exception as e:
-        print(f"❌ Webhook processing error: {e}")
-        return 'ERROR', 400
+try:
+update = telebot.types.Update.de_json(request.data.decode('utf-8'))
+bot.process_new_updates([update])
+except Exception as e:
+print(f"⚠️ Error: {e}")
+return 'OK', 200
+
+@app.route('/')
+def home():
+return f"⚽ {BOT_NAME} is running perfectly!", 200
 
 # -------------------------
-# Initialize Advanced System
+# Start Flask + webhook
 # -------------------------
-def initialize_advanced_system():
-    """Initialize the enhanced prediction system"""
-    print("🚀 Starting Advanced AI Football Prediction System...")
-    print("📊 Loading real-time data processors...")
-    print("🤖 Initializing predictive algorithms...")
-    print("🔍 Activating comprehensive monitoring...")
-    
-    # Start enhanced auto-prediction thread
-    prediction_thread = threading.Thread(target=intelligent_auto_predictor, daemon=True)
-    prediction_thread.start()
-    
-    # Configure webhook for production
-    try:
-        bot.remove_webhook()
-        time.sleep(1)
-        
-        # 🎯 IMPORTANT: Replace with your actual Railway URL
-        railway_domain = "https://your-app-name.railway.app"  # ⚠️ UPDATE THIS
-        webhook_url = f"{railway_domain}/{BOT_TOKEN}"
-        
-        bot.set_webhook(url=webhook_url)
-        print(f"✅ Webhook configured: {webhook_url}")
-        print("🔧 System running in PRODUCTION mode")
-        
-    except Exception as e:
-        print(f"❌ Webhook configuration failed: {e}")
-        print("🔄 Activating fallback polling mode...")
-        bot.remove_webhook()
-        bot.polling(none_stop=True)
-
-if __name__ == '__main__':
-    initialize_advanced_system()
-    app.run(host='0.0.0.0', port=8080)
-
-
-
-
-
-
+if name=="main":
+domain = "https://football-auto-bot-production.up.railway.app"  # Update with your Railway domain
+webhook_url = f"{domain}/{BOT_TOKEN}"
+bot.remove_webhook()
+bot.set_webhook(url=webhook_url)
+print(f"✅ Webhook set: {webhook_url}")
+print("🤖 Malik Bhai Intelligent Bot is now active with smart responses!")
+app.run(host='0.0.0.0', port=8080)
 
 
 

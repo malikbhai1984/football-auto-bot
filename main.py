@@ -10,6 +10,13 @@ import requests
 
 
 
+@app.route("/" + BOT_TOKEN, methods=["POST"])
+def receive_update():
+    update = telebot.types.Update.de_json(request.data.decode("utf-8"))
+    bot.process_new_updates([update])
+    return "OK", 200
+
+
 
 
 

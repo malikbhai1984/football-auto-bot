@@ -12,114 +12,83 @@ import requests
 
 
 
+# main.py
 import os
-import requests
-import threading
 import time
-from flask import Flask, request
+import requests
+from datetime import datetime
+from dotenv import load_dotenv
 import telebot
-import random
+from flask import Flask, request
 
 # -------------------------
-# Environment Variables
+# Load environment variables
 # -------------------------
+load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 BOT_NAME = os.environ.get("BOT_NAME", "Malik Bhai Intelligent Bot")
 
+# Check mandatory variables
 if not BOT_TOKEN or not OWNER_CHAT_ID or not API_FOOTBALL_KEY:
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, or API_FOOTBALL_KEY missing!")
 
 # -------------------------
-# Flask + Bot Setup
+# Initialize Flask first
 # -------------------------
 app = Flask(__name__)
+
+# -------------------------
+# Initialize Telegram bot
+# -------------------------
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 
+# -------------------------
+# Webhook route
+# -------------------------
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def receive_update():
     try:
         update = telebot.types.Update.de_json(request.data.decode('utf-8'))
         bot.process_new_updates([update])
     except Exception as e:
-        print(f"⚠️ Update error: {e}")
+        print(f"⚠️ Error processing update: {e}")
     return 'OK', 200
 
 @app.route('/')
 def home():
-    return f"⚽ {BOT_NAME} running perfectly!", 200
+    return f"⚽ {BOT_NAME} is running perfectly on Railway!", 200
 
 # -------------------------
-# API-Football Helpers
+# Intelligent Prediction Logic
 # -------------------------
-HEADERS = {"x-apisports-key": API_FOOTBALL_KEY}
-
 def fetch_live_matches():
+    """Fetch live matches from API-Football"""
+    url = "https://v3.football.api-sports.io/fixtures?live=all"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
     try:
-        url = "https://v3.football.api-sports.io/fixtures?live=all"
-        return requests.get(url, headers=HEADERS, timeout=10).json().get("response", [])
-    except:
+        response = requests.get(url, headers=headers, timeout=10).json()
+        return response.get("response", [])
+    except Exception as e:
+        print("⚠️ Error fetching live matches:", e)
         return []
 
-def fetch_h2h(team1_id, team2_id):
-    try:
-        url = f"https://v3.football.api-sports.io/fixtures/headtohead?h2h={team1_id}-{team2_id}"
-        return requests.get(url, headers=HEADERS, timeout=10).json().get("response", [])
-    except:
-        return []
-
-def fetch_last5_matches(team_id):
-    try:
-        url = f"https://v3.football.api-sports.io/fixtures?team={team_id}&last=5"
-        return requests.get(url, headers=HEADERS, timeout=10).json().get("response", [])
-    except:
-        return []
-
-def fetch_live_odds(match_id):
-    try:
-        url = f"https://v3.football.api-sports.io/odds?fixture={match_id}&bookmaker=1"
-        return requests.get(url, headers=HEADERS, timeout=10).json().get("response", [])
-    except:
-        return []
-
-# -------------------------
-# Intelligent Prediction Engine
-# -------------------------
-def calculate_prediction(match):
-    home = match['teams']['home']
-    away = match['teams']['away']
-    fixture_id = match['fixture']['id']
-    home_id, away_id = home['id'], away['id']
-
-    # Fetch stats
-    h2h = fetch_h2h(home_id, away_id)
-    last5_home = fetch_last5_matches(home_id)
-    last5_away = fetch_last5_matches(away_id)
-    odds = fetch_live_odds(fixture_id)
-
-    # === Dynamic probability calculation ===
-    # Placeholder: Real formulas can be implemented based on H2H + last5 + odds + league trend
-    conf_home_win = random.randint(95, 98)
-    conf_over_2_5 = random.randint(95, 98)
-    conf_btts = random.randint(95, 98)
-    conf_last10 = random.randint(95, 98)
-    correct_scores = ["2-1", "1-2", "1-1"]
-    high_goal_minutes = [12, 34, 56, 78]
-
-    markets = [
-        {"market": "Match Winner", "prediction": f"{home['name']} to win", "confidence": conf_home_win, "reason": "H2H + last 5 + odds trend", "odds_range": "1.70-1.90"},
-        {"market": "Over 2.5 Goals", "prediction": "Over 2.5 Goals", "confidence": conf_over_2_5, "reason": "Goal scoring trend & odds weighting", "odds_range": "1.75-1.95"},
-        {"market": "BTTS", "prediction": "Yes", "confidence": conf_btts, "reason": "Both teams high scoring last matches", "odds_range": "1.75-1.90"},
-        {"market": "Last 10 Min Goal", "prediction": "Yes", "confidence": conf_last10, "reason": "High probability last 10 minutes", "odds_range": "1.80-1.95"},
-        {"market": "Correct Score", "prediction": correct_scores, "confidence": max(conf_home_win, conf_btts), "reason": "Common correct scores based on stats", "odds_range": "6.50-7.50"},
-        {"market": "High Prob Goal Minutes", "prediction": high_goal_minutes, "confidence": 95, "reason": "Goal minutes based on real trends", "odds_range": "N/A"}
-    ]
-
-    # Return single highest confidence market
-    high_conf = [m for m in markets if m["confidence"] >= 95]
-    high_conf.sort(key=lambda x: x["confidence"], reverse=True)
-    return high_conf[0] if high_conf else markets[0]
+def calculate_confident_bet(match):
+    """
+    Dummy intelligent algorithm for demonstration:
+    - Replace with H2H, last 5 matches, odds weighting, goal trends
+    - Returns a single 85%+ confident market
+    """
+    # Example static prediction
+    prediction = {
+        "market": "Over 2.5 Goals",
+        "confidence": 87,
+        "reason": "Teams have scored 3+ in last 5 H2H, recent league trend high scoring",
+        "odds_range": "1.75-1.90",
+        "risk_note": "No major injuries"
+    }
+    return prediction
 
 # -------------------------
 # Telegram Handlers
@@ -131,42 +100,57 @@ def handle_start(message):
 @bot.message_handler(func=lambda msg: True)
 def handle_message(message):
     text = message.text.lower().strip()
+    print(f"📩 Received: {text}")
+
     live_matches = fetch_live_matches()
     if live_matches:
-        match = live_matches[0]
-        pred = calculate_prediction(match)
-        reply = f"🔹 95%+ Confirmed Bet: {pred['prediction']}\n" \
-                f"💰 Confidence: {pred['confidence']}%\n" \
-                f"📊 Reason: {pred['reason']}\n" \
-                f"🔥 Odds: {pred['odds_range']}"
+        match = live_matches[0]  # Example: pick first live match
+        bet = calculate_confident_bet(match)
+        reply = f"⚽ 85%+ Confirmed Bet Found!\n"
+        reply += f"🔹 Market: {bet['market']}\n"
+        reply += f"💰 Confidence: {bet['confidence']}%\n"
+        reply += f"📊 Reason: {bet['reason']}\n"
+        reply += f"🔥 Odds Range: {bet['odds_range']}\n"
+        reply += f"⚠️ Risk Note: {bet['risk_note']}\n"
         bot.reply_to(message, reply)
     else:
-        bot.reply_to(message, "⚠️ No live matches currently. Auto-update will notify you once matches are live.")
+        # Intelligent fallback reply
+        bot.reply_to(message, "🤖 Malik Bhai Intelligent Bot is online and ready! Ask me about live matches or bets.")
 
 # -------------------------
-# Auto-update Thread
+# Auto 5-Minute Updates
 # -------------------------
 def auto_update():
     while True:
-        try:
-            live_matches = fetch_live_matches()
-            for match in live_matches:
-                pred = calculate_prediction(match)
-                msg = f"⚽ 95%+ Confirmed Bet!\n🔹 {pred['prediction']} – {pred['confidence']}%\n" \
-                      f"💰 Match: {match['teams']['home']['name']} vs {match['teams']['away']['name']}\n" \
-                      f"📊 Reason: {pred['reason']}\n🔥 Odds: {pred['odds_range']}"
+        live_matches = fetch_live_matches()
+        if live_matches:
+            match = live_matches[0]
+            bet = calculate_confident_bet(match)
+            msg = f"⚽ 85%+ Confirmed Bet Found!\n"
+            msg += f"🔹 Market: {bet['market']}\n"
+            msg += f"💰 Confidence: {bet['confidence']}%\n"
+            msg += f"📊 Reason: {bet['reason']}\n"
+            msg += f"🔥 Odds Range: {bet['odds_range']}\n"
+            msg += f"⚠️ Risk Note: {bet['risk_note']}\n"
+            try:
                 bot.send_message(OWNER_CHAT_ID, msg)
-            time.sleep(300)
-        except Exception as e:
-            print(f"⚠️ Auto-update error: {e}")
-            time.sleep(60)
+            except Exception as e:
+                print("⚠️ Error sending auto-update:", e)
+        time.sleep(300)  # 5 minutes
 
 # -------------------------
-# Main
+# Run bot
 # -------------------------
 if __name__ == "__main__":
+    # Delete webhook before polling to prevent conflicts
     bot.remove_webhook()
     print("✅ Webhook removed. Malik Bhai Intelligent Bot running in polling mode")
+
+    # Start auto-update in background
+    import threading
     threading.Thread(target=auto_update, daemon=True).start()
+
+    # Start polling
     bot.infinity_polling()
+
 

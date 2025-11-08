@@ -12,18 +12,18 @@ import requests
 
 
 
+
+# main.py
 import os
 import math
-import time
 import asyncio
 import requests
 import telebot
-import threading
 from flask import Flask, request
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # -------------------------
-# Load env
+# Environment / config
 # -------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
@@ -34,56 +34,51 @@ BOT_NAME = os.environ.get("BOT_NAME", "Football Smart Bot")
 if not BOT_TOKEN or not OWNER_CHAT_ID or not API_KEY:
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID and API_KEY must be set in environment variables!")
 
-OWNER_CHAT_ID_INT = int(OWNER_CHAT_ID) if str(OWNER_CHAT_ID).isdigit() else OWNER_CHAT_ID
+# Ensure owner id numeric if possible
+try:
+    OWNER_CHAT_ID_INT = int(OWNER_CHAT_ID)
+except:
+    OWNER_CHAT_ID_INT = OWNER_CHAT_ID
 
 API_BASE = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
 # -------------------------
-# ✅ PEHLE FLASK APP DEFINE KARO
+# Flask + Telebot init
 # -------------------------
 app = Flask(__name__)
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# -------------------------
-# ✅ AB WEBHOOK ROUTES DEFINE KARO
-# -------------------------
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    json_str = request.get_data().decode('UTF-8')
-    update = telebot.types.Update.de_json(json_str)
-    bot.process_new_updates([update])
-    return 'OK', 200
-
-@app.route('/')
-def home():
-    return f"⚽ {BOT_NAME} is running!", 200
-
-# Keep set of alerts sent to avoid duplicates: (fixture_id, market_key)
+# Avoid duplicate alerts
 sent_alerts = set()
 
 # -------------------------
-# Utility helpers
+# Helpers
 # -------------------------
 def safe_get(d, *keys, default=None):
     v = d
     try:
         for k in keys:
-            v = v.get(k, {})
-        if v == {}: return default
-        return v
+            if isinstance(v, dict):
+                v = v.get(k, {})
+            else:
+                return default
+        return v if v != {} else default
     except Exception:
         return default
 
-def roundp(x): return int(round(x))
+def roundp(x):
+    try:
+        return int(round(x))
+    except:
+        return 0
 
 # -------------------------
-# Analysis functions
+# API helpers
 # -------------------------
 def fetch_fixtures_search(home, away):
     """
-    Search fixtures by home and try to match away.
-    Returns first matching fixture dict or None.
+    Search fixtures by team name keywords. Return first matching fixture object or None.
     """
     try:
         q = home
@@ -95,7 +90,7 @@ def fetch_fixtures_search(home, away):
             home_name = safe_get(f, "teams", "home", "name", default="").lower()
             if away.lower() in away_name and home.lower() in home_name:
                 return f
-        # fallback: try searching by away
+        # fallback: search by away then match home
         q2 = away
         url2 = f"{API_BASE}/fixtures?search={requests.utils.quote(q2)}"
         r2 = requests.get(url2, headers=HEADERS, timeout=15)
@@ -109,7 +104,7 @@ def fetch_fixtures_search(home, away):
 
 def fetch_team_stats(team_id, league_id=None, season=None):
     """
-    Returns stats dict via /teams/statistics if available.
+    Fetch teams/statistics from API-Football. Returns response dict or {}.
     """
     try:
         url = f"{API_BASE}/teams/statistics?team={team_id}"
@@ -118,37 +113,38 @@ def fetch_team_stats(team_id, league_id=None, season=None):
         if season:
             url += f"&season={season}"
         r = requests.get(url, headers=HEADERS, timeout=15)
-        return r.json().get("response", {})
+        return r.json().get("response", {}) or {}
     except Exception as e:
         print("fetch_team_stats error:", e)
         return {}
 
+# -------------------------
+# Core heuristics & analysis
+# -------------------------
 def compute_probabilities_from_fixture(f):
     """
-    Given an API fixture object (live or upcoming), compute market probabilities.
-    Returns dict with market probabilities (0-100).
-    Heuristics based on: current score, minute, teams' scoring averages, form strings.
+    Compute market probabilities for a fixture (live or upcoming).
+    Returns dict with probabilities and helper fields.
     """
     try:
         home = safe_get(f, "teams", "home", "name", default="Home")
         away = safe_get(f, "teams", "away", "name", default="Away")
         home_id = safe_get(f, "teams", "home", "id", default=None)
         away_id = safe_get(f, "teams", "away", "id", default=None)
-        league = safe_get(f, "league", "id", default=None)
-        season = safe_get(f, "league", "season", default=None)
+        league = safe_get(f, "league", "id")
+        season = safe_get(f, "league", "season")
 
-        # current score & time
         gh = safe_get(f, "goals", "home", default=0) or 0
         ga = safe_get(f, "goals", "away", default=0) or 0
         total = gh + ga
         minute = safe_get(f, "fixture", "status", "elapsed", default=0) or 0
-        status = safe_get(f, "fixture", "status", "short", default="NS")
+        status_short = safe_get(f, "fixture", "status", "short", default="NS")
 
-        # team stats (fallback values)
+        # fetch team stats (safely)
         h_stats = fetch_team_stats(home_id, league_id=league, season=season) if home_id else {}
         a_stats = fetch_team_stats(away_id, league_id=league, season=season) if away_id else {}
 
-        # averages
+        # average goals (fallback to 1.2)
         try:
             h_avg = float(safe_get(h_stats, "goals", "for", "average", "total", default=1.2) or 1.2)
         except:
@@ -159,45 +155,45 @@ def compute_probabilities_from_fixture(f):
             a_avg = 1.2
 
         # form strings (like "WWDL")
-        h_form = "".join(safe_get(h_stats, "form", default=""))
-        a_form = "".join(safe_get(a_stats, "form", default=""))
+        h_form = "".join(safe_get(h_stats, "form", default="") or "")
+        a_form = "".join(safe_get(a_stats, "form", default="") or "")
 
-        # base heuristics
-        # Over 2.5: rises with combined avg and current total and elapsed
-        over25 = (h_avg + a_avg) * 22  # base weight
+        # Heuristics:
+        # Over 2.5 baseline from combined averages
+        over25 = (h_avg + a_avg) * 22
         over25 += min(30, total * 20)
         over25 += min(20, (minute / 90) * 20)
-        # BTTS: depends on both teams' scoring and conceding averages
+        # BTTS baseline
         btts = (h_avg + a_avg) * 20 + 30
         if gh == 0 and ga == 0 and minute < 20:
             btts -= 10
-        # Winner probabilities: naive Elo-ish heuristic
+
+        # Winner probability heuristic from averages + form
         home_strength = h_avg + (0.5 * h_form.count("W")) - (0.5 * h_form.count("L"))
         away_strength = a_avg + (0.5 * a_form.count("W")) - (0.5 * a_form.count("L"))
-        total_strength = home_strength + away_strength if (home_strength + away_strength) > 0 else 1
+        total_strength = (home_strength + away_strength) if (home_strength + away_strength) > 0 else 1
         home_prob = 50 * (home_strength / total_strength)
         away_prob = 50 * (away_strength / total_strength)
-        # small adjustments for current score & minute
+
+        # adjust for current score/time
         if minute > 60:
-            # trailing team more likely to push and concede late
             if gh > ga:
                 home_prob += 8
             elif ga > gh:
                 away_prob += 8
 
-        # clamp 0-100
+        # clamp and compute draw
         over25 = max(0, min(99, over25))
         btts = max(0, min(99, btts))
         home_prob = max(0, min(99, home_prob))
         away_prob = max(0, min(99, away_prob))
         draw_prob = max(0, min(99, 100 - (home_prob + away_prob)))
 
-        # last-10-min chance heuristic
-        last10 = 5 + ( (h_avg + a_avg) * 4 ) + ( (total / 2) if minute>60 else 0 )
+        # last10 heuristic
+        last10 = 5 + ((h_avg + a_avg) * 4) + ((total / 2) if minute > 60 else 0)
         last10 = max(1, min(60, last10))
 
-        # suggested correct scores: basic heuristics using current score
-        suggestions = []
+        # suggested correct scores
         if total == 0:
             suggestions = [f"{home} 1-0 {away}", f"{home} 0-1 {away}"]
         elif total == 1:
@@ -228,30 +224,26 @@ def compute_probabilities_from_fixture(f):
 
 def choose_best_market(probs):
     """
-    From computed probabilities choose a single market if >=85% confidence.
-    Return tuple (market_string, confidence, short_reason, odds_range, risk_note)
+    Return a single market tuple if >=85% found, else None.
+    Tuple: (market_text, confidence_int, short_reason, odds_range, risk_note)
     """
-    # check in priority order: outright win, BTTS, Over2.5, last10 (but must be >=85)
     if probs["home_prob"] >= 85:
         return (f"Match Winner: {probs['home']} to Win", probs["home_prob"],
-                f"{probs['home']} strong vs {probs['away']}", "1.60-1.95", "Late cards/injuries")
+                f"{probs['home']} strong vs {probs['away']}", "1.60-1.95", "Injuries/cards may change outcome")
     if probs["away_prob"] >= 85:
         return (f"Match Winner: {probs['away']} to Win", probs["away_prob"],
-                f"{probs['away']} stronger form vs {probs['home']}", "1.60-2.00", "Pitch/rotation risks")
+                f"{probs['away']} stronger form vs {probs['home']}", "1.60-2.00", "Rotation/fitness risk")
     if probs["btts_prob"] >= 85:
-        return (f"Both Teams To Score - Yes", probs["btts_prob"],
-                f"Both teams scoring frequently (avg goals high)", "1.65-1.95", "Red cards / keeper form")
+        return ("Both Teams To Score - Yes", probs["btts_prob"],
+                "Both teams scoring frequently (high avg goals)", "1.65-1.95", "Red cards / keeper form")
     if probs["over25_prob"] >= 85:
-        return (f"Over 2.5 Goals", probs["over25_prob"],
-                f"High combined goals per match ({(probs['home_goals']+probs['away_goals'])} current + high xG)", "1.70-1.95", "Momentum can stop")
+        return ("Over 2.5 Goals", probs["over25_prob"],
+                f"High combined scoring / current total {probs['home_goals']+probs['away_goals']}", "1.70-1.95", "Momentum shifts")
     if probs["last10_prob"] >= 85:
-        return (f"Goal in Last 10 Minutes", probs["last10_prob"],
-                f"Late goals historically likely", "1.90-2.50", "Very situational")
-    return None  # no >=85
+        return ("Goal in Last 10 Minutes", probs["last10_prob"],
+                "Late goals historically likely", "1.90-2.50", "Very situational")
+    return None
 
-# -------------------------
-# Format output as required
-# -------------------------
 def format_output_single(profit):
     market, conf, reason, odds, risk = profit
     return (
@@ -263,14 +255,16 @@ def format_output_single(profit):
     )
 
 # -------------------------
-# Analyze match by text (home vs away)
+# Text-based analyze (user queries)
 # -------------------------
 def analyze_match_text(text):
-    # expect "TeamA vs TeamB" somewhere in text
+    """
+    Accepts strings like 'Levante vs Celta Vigo' and returns analysis string.
+    """
     t = text.lower().replace("prediction", "").strip()
     if " vs " in t:
         parts = [p.strip() for p in t.split(" vs ")]
-    elif "v " in t:
+    elif " v " in t:
         parts = [p.strip() for p in t.split(" v ")]
     else:
         return "⚠️ Please send like: Levante vs Celta Vigo"
@@ -279,7 +273,6 @@ def analyze_match_text(text):
         return "⚠️ Please specify both teams like 'TeamA vs TeamB'."
 
     home, away = parts[0], parts[1]
-    # attempt to find fixture
     fixture = fetch_fixtures_search(home, away)
     if not fixture:
         return f"⚠️ Match not found for: {home.title()} vs {away.title()}"
@@ -288,27 +281,23 @@ def analyze_match_text(text):
     if not probs:
         return "⚠️ Unable to compute probabilities right now."
 
-    # Prepare required detailed analysis (all markets)
+    # Detailed breakdown
     details = []
     details.append(f"Match: {probs['home']} vs {probs['away']} (minute: {probs['minute']}′)")
     details.append(f"1) Match Winner (H/D/A): {probs['home_prob']}% / {probs['draw_prob']}% / {probs['away_prob']}%")
-    details.append(f"2) Over/Under probabilities → Over2.5: {probs['over25_prob']}%")
+    details.append(f"2) Over/Under → Over 2.5: {probs['over25_prob']}%")
     details.append(f"3) BTTS (Yes): {probs['btts_prob']}%")
     details.append(f"4) Last 10-min goal chance: {probs['last10_prob']}%")
     details.append(f"5) Correct scores: {', '.join(probs['suggested_scores'])}")
     details.append(f"6) High-prob minutes: 20-30′ and 75-85′")
 
-    # Now choose the ONE 85%+ market
     chosen = choose_best_market(probs)
     if not chosen:
-        # If strict rule: return NO 85%+ BET FOUND plus detailed analysis (as user wanted)
         full = "NO 85%+ BET FOUND\n\n" + "\n".join(details)
         return full
 
-    # else format chosen market into required output (with 2-3 line reasoning)
     out = format_output_single(chosen)
-    # add short 2-line economics
-    out += "\n\n" + "Full market breakdown:\n" + "\n".join(details[:4])
+    out += "\n\nFull market breakdown:\n" + "\n".join(details[:4])
     return out
 
 # -------------------------
@@ -316,17 +305,14 @@ def analyze_match_text(text):
 # -------------------------
 @bot.message_handler(commands=['start','help'])
 def cmd_start(m):
-    bot.reply_to(m, f"👋 {BOT_NAME} online. Send me 'TeamA vs TeamB' to get analysis (I will only return a bet if 85%+ confidence).")
+    bot.reply_to(m, f"👋 {BOT_NAME} online. Send 'TeamA vs TeamB' for analysis. I will only return a bet if 85%+ confidence found.")
 
 @bot.message_handler(func=lambda m: True)
 def cmd_any(m):
     text = (m.text or "").strip()
-    # quick keywords
     if not text:
         bot.reply_to(m, "⚠️ Send: TeamA vs TeamB")
         return
-
-    # if user asks for "who will win" or has 'vs' call analyze
     if " vs " in text.lower() or " v " in text.lower():
         reply = analyze_match_text(text)
         bot.reply_to(m, reply)
@@ -334,7 +320,7 @@ def cmd_any(m):
         bot.reply_to(m, "⚽ Send me like: 'Levante vs Celta Vigo' for a full analysis and (only) 85%+ bets.")
 
 # -------------------------
-# Background live poller
+# Live match analyzer + alert sender
 # -------------------------
 async def analyze_live_fixture_and_alert(f):
     fi_id = safe_get(f, "fixture", "id", default=None)
@@ -346,7 +332,6 @@ async def analyze_live_fixture_and_alert(f):
         key = (fi_id, chosen[0])
         if key in sent_alerts:
             return
-        # send alert
         text = format_output_single(chosen)
         text += f"\n\nMatch live: {probs['home']} {probs['home_goals']}-{probs['away_goals']} {probs['away']} ({probs['minute']}′)"
         try:
@@ -369,34 +354,34 @@ async def poll_live_loop():
                     await analyze_live_fixture_and_alert(f)
         except Exception as e:
             print("poll_live_loop error:", e)
-        await asyncio.sleep(300)  # 5 minutes
-
-def start_poller():
-    """Start background poller in a separate thread"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(poll_live_loop())
+        await asyncio.sleep(300)
 
 # -------------------------
-# Run app + background tasks
+# Run server + background
 # -------------------------
-if __name__ == "__main__":
-    print("🏁 Setting webhook and starting background poller...")
-    
-    # Webhook setup
+async def main():
+    print("🏁 Phase3: Setting webhook and starting background poller...")
     bot.remove_webhook()
-    time.sleep(1)
     bot.set_webhook(url=f"{DOMAIN}/{BOT_TOKEN}")
-    print(f"✅ Webhook set: {DOMAIN}/{BOT_TOKEN}")
+    print("✅ Webhook set:", f"{DOMAIN}/{BOT_TOKEN}")
 
-    # Start background poller in separate thread
-    poller_thread = threading.Thread(target=start_poller, daemon=True)
-    poller_thread.start()
-    print("✅ Background poller started")
+    # Start poller
+    asyncio.create_task(poll_live_loop())
 
-    # Run Flask app
-    print("✅ Starting Flask server...")
-    app.run(host="0.0.0.0", port=8080, debug=False)
+    # Serve Flask via hypercorn for async support
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config
+    cfg = Config()
+    cfg.bind = ["0.0.0.0:8080"]
+    await serve(app, cfg)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
+
+
+
+
 
 
 

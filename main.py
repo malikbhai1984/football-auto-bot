@@ -12,6 +12,7 @@ import requests
 
 
 
+
 import os
 from dotenv import load_dotenv
 import telebot
@@ -76,7 +77,6 @@ def fetch_h2h(home, away):
 # -------------------------
 def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
     try:
-        # Odds weight
         odds_weight = 0
         if odds_data:
             try:
@@ -84,18 +84,13 @@ def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
                 draw_odd = float(odds_data.get("Draw", 3))
                 away_odd = float(odds_data.get("Away", 4))
                 odds_weight = max(100/home_odd, 100/draw_odd, 100/away_odd)
-            except: odds_weight = 70
+            except:
+                odds_weight = 70
 
-        # Team form weight
         form_weight = (home_form + away_form)/2
-
-        # H2H weight
         h2h_weight = sum([m.get("result_weight", 80) for m in h2h_data])/len(h2h_data) if h2h_data else 75
-
-        # Goal trend weight
         goal_weight = sum(goal_trend)/len(goal_trend) if goal_trend else 70
 
-        # Combined confidence
         combined = (0.4*odds_weight) + (0.3*form_weight) + (0.2*h2h_weight) + (0.1*goal_weight)
         return round(combined,1)
     except:
@@ -109,7 +104,6 @@ def intelligent_analysis(match):
     away = match["teams"]["away"]["name"]
     fixture_id = match["fixture"]["id"]
 
-    # Fetch Odds
     odds_raw = fetch_odds(fixture_id)
     odds_list = {}
     if odds_raw:
@@ -119,24 +113,18 @@ def intelligent_analysis(match):
                     mw = book["bets"][0]["values"]
                     odds_list = {"Home": float(mw[0]["odd"]), "Draw": float(mw[1]["odd"]), "Away": float(mw[2]["odd"])}
                     break
-        except: odds_list = {"Home":2.0,"Draw":3.0,"Away":4.0}
+        except:
+            odds_list = {"Home":2.0,"Draw":3.0,"Away":4.0}
 
-    # Team form last 5 matches (dummy data, replace with API stats if needed)
     home_form = 85
     away_form = 80
-
-    # H2H data (dummy weights, can calculate from API)
     h2h_data = [{"result_weight":90},{"result_weight":85},{"result_weight":80}]
-
-    # Dynamic goal trend (last 10 min goal chance)
     goal_trend = [80,85,90]
 
-    # Confidence
     confidence = calculate_confidence(odds_list, home_form, away_form, h2h_data, goal_trend)
     if confidence < 85:
         return None
 
-    # Correct Score & BTTS Calculation (simplified logic)
     top_correct_scores = ["2-1","1-1"]
     btts = "Yes" if confidence>87 else "No"
 
@@ -220,15 +208,14 @@ def smart_reply(message):
         bot.reply_to(message, "👋 Hello Malik Bhai! Intelligent Bot is online ✅")
     elif any(x in text for x in ["update","live","who will win","over 2.5","btts","correct score"]):
         matches = fetch_live_matches()
-        if not matches:
-            bot.reply_to(message, "📊 No live matches now. Auto-update will notify you soon!")
+        for match in matches:
+            analysis = intelligent_analysis(match)
+            if analysis:
+                msg = format_bet_msg(match, analysis)
+                bot.reply_to(message, msg)
+                break
         else:
-            for match in matches:
-                analysis = intelligent_analysis(match)
-                if analysis:
-                    msg = format_bet_msg(match, analysis)
-                    bot.reply_to(message, msg)
-                    break
+            bot.reply_to(message, "📊 No live matches now. Auto-update will notify you soon!")
     else:
         bot.reply_to(message, "🤖 Malik Bhai Intelligent Bot is online and ready! Ask me for match predictions like I do.")
 
@@ -242,3 +229,12 @@ if __name__ == "__main__":
     bot.set_webhook(url=webhook_url)
     print(f"✅ Webhook set: {webhook_url}")
     app.run(host='0.0.0.0', port=8080)
+
+
+
+
+
+
+
+
+

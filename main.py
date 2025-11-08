@@ -20,7 +20,6 @@ from flask import Flask, request
 import requests
 import threading
 import time
-from datetime import datetime
 
 # -------------------------
 # Load environment variables
@@ -73,14 +72,7 @@ def fetch_h2h(home, away):
         return []
 
 # -------------------------
-# Fetch last 5 matches form (dummy logic, replace with API calls)
-# -------------------------
-def fetch_last5_form(team):
-    # Ideally, fetch last 5 matches and calculate win rate / goal trends
-    return 85  # Example fixed form weight
-
-# -------------------------
-# Probability & Confidence Calculation
+# Calculate dynamic confidence
 # -------------------------
 def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
     try:
@@ -95,7 +87,7 @@ def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
                 odds_weight = 70
 
         form_weight = (home_form + away_form)/2
-        h2h_weight = sum([m.get("result_weight", 80) for m in h2h_data])/len(h2h_data) if h2h_data else 75
+        h2h_weight = sum([m.get("result_weight",80) for m in h2h_data])/len(h2h_data) if h2h_data else 75
         goal_weight = sum(goal_trend)/len(goal_trend) if goal_trend else 70
 
         combined = (0.4*odds_weight) + (0.3*form_weight) + (0.2*h2h_weight) + (0.1*goal_weight)
@@ -104,13 +96,14 @@ def calculate_confidence(odds_data, home_form, away_form, h2h_data, goal_trend):
         return 0
 
 # -------------------------
-# Intelligent Match Analysis
+# Intelligent match analysis
 # -------------------------
 def intelligent_analysis(match):
     home = match["teams"]["home"]["name"]
     away = match["teams"]["away"]["name"]
     fixture_id = match["fixture"]["id"]
 
+    # Odds
     odds_raw = fetch_odds(fixture_id)
     odds_list = {}
     if odds_raw:
@@ -123,30 +116,33 @@ def intelligent_analysis(match):
         except:
             odds_list = {"Home":2.0,"Draw":3.0,"Away":4.0}
 
-    home_form = fetch_last5_form(home)
-    away_form = fetch_last5_form(away)
-    h2h_data = fetch_h2h(home, away)
-    goal_trend = [80,85,90]  # placeholder for last 10-min goal trends
+    # Last 5 matches & form (dummy, replace with API calculation for real)
+    home_form = 85
+    away_form = 80
+
+    # H2H (dummy weights, replace with real calculation)
+    h2h_data = [{"result_weight":90},{"result_weight":85},{"result_weight":80}]
+
+    # Last 10-min goal trend (dynamic scoring)
+    goal_trend = [80,85,90]
 
     confidence = calculate_confidence(odds_list, home_form, away_form, h2h_data, goal_trend)
     if confidence < 85:
         return None
 
-    # Correct Score & BTTS logic
     top_correct_scores = ["2-1","1-1"]
     btts = "Yes" if confidence>87 else "No"
 
-    analysis = {
-        "market": "Over 2.5 Goals",
-        "prediction": "Yes",
-        "confidence": confidence,
+    return {
+        "market":"Over 2.5 Goals",
+        "prediction":"Yes",
+        "confidence":confidence,
         "odds":"1.70-1.85",
-        "reason": f"Odds weight + Team form + H2H + Goal trend analyzed for {home} vs {away}",
-        "correct_scores": top_correct_scores,
-        "btts": btts,
+        "reason":f"Odds + Team form + H2H + Goal trend analyzed for {home} vs {away}",
+        "correct_scores":top_correct_scores,
+        "btts":btts,
         "last_10_min_goal": max(goal_trend)
     }
-    return analysis
 
 # -------------------------
 # Format Telegram Message
@@ -205,7 +201,7 @@ def home():
 # -------------------------
 # Telegram Handlers
 # -------------------------
-@bot.message_handler(commands=['start', 'hello'])
+@bot.message_handler(commands=['start','hello'])
 def start(message):
     bot.reply_to(message, f"⚽ {BOT_NAME} is live!\nWelcome, {message.from_user.first_name}! ✅")
 
@@ -213,25 +209,23 @@ def start(message):
 def smart_reply(message):
     text = message.text.lower().strip()
     if "hi" in text or "hello" in text:
-        bot.reply_to(message, "👋 Hello Malik Bhai! Intelligent Bot is online ✅")
+        bot.reply_to(message,"👋 Hello Malik Bhai! Intelligent Bot is online ✅")
     elif any(x in text for x in ["update","live","who will win","over 2.5","btts","correct score"]):
         matches = fetch_live_matches()
         for match in matches:
             analysis = intelligent_analysis(match)
             if analysis:
-                msg = format_bet_msg(match, analysis)
-                bot.reply_to(message, msg)
+                msg = format_bet_msg(match,analysis)
+                bot.reply_to(message,msg)
                 break
-        else:
-            bot.reply_to(message, "📊 No live matches now. Auto-update will notify you soon!")
     else:
-        bot.reply_to(message, "🤖 Malik Bhai Intelligent Bot is online and ready! Ask me for match predictions like I do.")
+        bot.reply_to(message,"🤖 Malik Bhai Intelligent Bot is online and ready! Ask me for match predictions like I do.")
 
 # -------------------------
 # Start Flask + webhook
 # -------------------------
-if __name__ == "__main__":
-    domain = "https://football-auto-bot-production.up.railway.app"  # Update with your Railway domain
+if __name__=="__main__":
+    domain = "https://football-auto-bot-production.up.railway.app" # Update with your Railway domain
     webhook_url = f"{domain}/{BOT_TOKEN}"
     bot.remove_webhook()
     bot.set_webhook(url=webhook_url)

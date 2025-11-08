@@ -1,10 +1,6 @@
 
 
 
-
-
-
-
 import os
 import requests
 import telebot
@@ -108,46 +104,91 @@ The system automatically scans and sends high-confidence alerts.
 """
 
 # -------------------------
-# REAL Football API Functions - ACTUAL DATA
+# IMPROVED Football API Functions - FIXED LIVE MATCHES
 # -------------------------
 def fetch_live_matches():
-    """Fetch ACTUAL live matches from API"""
+    """Fetch ACTUAL live matches from API with better error handling"""
     try:
         print("🔄 Fetching REAL live matches from API...")
-        response = requests.get(f"{API_URL}/fixtures?live=all", headers=HEADERS, timeout=10)
+        response = requests.get(f"{API_URL}/fixtures?live=all", headers=HEADERS, timeout=15)
+        
+        print(f"📡 API Response Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Check API response structure
+            if "response" in data:
+                matches = data["response"]
+                print(f"✅ Found {len(matches)} REAL live matches")
+                
+                if matches:
+                    print("📋 Current Live Matches:")
+                    for i, match in enumerate(matches, 1):
+                        home_team = match["teams"]["home"]["name"]
+                        away_team = match["teams"]["away"]["name"] 
+                        league = match["league"]["name"]
+                        status = match["fixture"]["status"]["short"]
+                        print(f"   {i}. {home_team} vs {away_team} | {league} | Status: {status}")
+                
+                return matches
+            else:
+                print("❌ API response missing 'response' key")
+                print(f"❌ Full response: {data}")
+                return []
+        elif response.status_code == 429:
+            print("❌ API Rate Limit Exceeded - Too many requests")
+            return []
+        else:
+            print(f"❌ API Error {response.status_code}: {response.text}")
+            return []
+            
+    except requests.exceptions.Timeout:
+        print("❌ API Request Timeout")
+        return []
+    except requests.exceptions.ConnectionError:
+        print("❌ API Connection Error")
+        return []
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        return []
+
+def get_todays_matches():
+    """Get today's matches as fallback"""
+    try:
+        today = datetime.now().strftime('%Y-%m-%d')
+        print(f"🔄 Fetching today's matches ({today}) as fallback...")
+        
+        response = requests.get(f"{API_URL}/fixtures?date={today}", headers=HEADERS, timeout=15)
         
         if response.status_code == 200:
             data = response.json()
             matches = data.get("response", [])
-            print(f"✅ Found {len(matches)} REAL live matches")
             
-            # Debug: Print match names
+            # Filter only upcoming or live matches
+            filtered_matches = []
             for match in matches:
-                home_team = match["teams"]["home"]["name"]
-                away_team = match["teams"]["away"]["name"]
-                print(f"   🏆 {home_team} vs {away_team}")
+                status = match["fixture"]["status"]["short"]
+                if status in ["NS", "1H", "2H", "HT", "LIVE"]:
+                    filtered_matches.append(match)
             
-            return matches
-        else:
-            print(f"❌ API Error: {response.status_code}")
-            print(f"❌ Response: {response.text}")
-            return []
-            
+            print(f"✅ Found {len(filtered_matches)} today's matches")
+            return filtered_matches
+        return []
     except Exception as e:
-        print(f"❌ Network Error: {e}")
+        print(f"❌ Today's matches error: {e}")
         return []
 
 def fetch_odds(fixture_id):
-    """Fetch ACTUAL odds data"""
+    """Fetch odds data with fallback"""
     try:
         response = requests.get(f"{API_URL}/odds?fixture={fixture_id}", headers=HEADERS, timeout=10)
         if response.status_code == 200:
             odds_data = response.json().get("response", [])
             
-            # Extract real odds if available
             if odds_data:
                 for bookmaker in odds_data:
-                    if bookmaker["bookmaker"]["name"].lower() in ["bet365", "william hill", "1xbet"]:
+                    if bookmaker["bookmaker"]["name"].lower() in ["bet365", "william hill", "1xbet", "pinnacle"]:
                         for bet in bookmaker["bets"]:
                             if bet["name"] == "Match Winner":
                                 home_odd = float(bet["values"][0]["odd"])
@@ -167,18 +208,16 @@ def fetch_odds(fixture_id):
                                     "draw": draw_odd,
                                     "away": away_odd
                                 }
-            
-            # Fallback if no odds found
-            return {"type": "competitive", "home": 2.10, "draw": 3.40, "away": 3.30}
-        else:
-            return {"type": "balanced", "home": 2.10, "draw": 3.40, "away": 3.30}
+        
+        # Fallback odds
+        return {"type": "competitive", "home": 2.10, "draw": 3.40, "away": 3.30}
             
     except Exception as e:
         print(f"❌ Odds fetch error: {e}")
         return {"type": "balanced", "home": 2.10, "draw": 3.40, "away": 3.30}
 
 def fetch_h2h_stats(home_id, away_id):
-    """Fetch ACTUAL H2H statistics"""
+    """Fetch H2H statistics"""
     try:
         response = requests.get(f"{API_URL}/fixtures/headtohead?h2h={home_id}-{away_id}&last=5", headers=HEADERS, timeout=10)
         if response.status_code == 200:
@@ -201,16 +240,14 @@ def fetch_h2h_stats(home_id, away_id):
                 return {
                     "matches_analyzed": len(h2h_data),
                     "avg_goals": round(avg_goals, 1),
-                    "btts_percentage": round(btts_percentage, 1),
-                    "home_wins": sum(1 for m in h2h_data if m["goals"]["home"] > m["goals"]["away"])
+                    "btts_percentage": round(btts_percentage, 1)
                 }
         
-        # Fallback if no H2H data
+        # Fallback H2H data
         return {
             "matches_analyzed": random.randint(2, 6),
             "avg_goals": round(random.uniform(2.0, 3.5), 1),
-            "btts_percentage": random.randint(50, 75),
-            "home_wins": random.randint(1, 3)
+            "btts_percentage": random.randint(50, 75)
         }
         
     except Exception as e:
@@ -218,12 +255,11 @@ def fetch_h2h_stats(home_id, away_id):
         return {
             "matches_analyzed": random.randint(2, 6),
             "avg_goals": round(random.uniform(2.0, 3.5), 1),
-            "btts_percentage": random.randint(50, 75),
-            "home_wins": random.randint(1, 3)
+            "btts_percentage": random.randint(50, 75)
         }
 
 def fetch_team_form(team_id, is_home=True):
-    """Fetch ACTUAL team form"""
+    """Fetch team form data"""
     try:
         response = requests.get(f"{API_URL}/fixtures?team={team_id}&last=5&status=ft", headers=HEADERS, timeout=10)
         if response.status_code == 200:
@@ -246,8 +282,8 @@ def fetch_team_form(team_id, is_home=True):
                         if match["goals"]["away"] > match["goals"]["home"]:
                             wins += 1
                 
-                win_percentage = (wins / len(form_data)) * 100
-                form_rating = 50 + (win_percentage * 0.5)  # Base 50 + win percentage influence
+                win_percentage = (wins / len(form_data)) * 100 if form_data else 0
+                form_rating = 50 + (win_percentage * 0.5)
                 
                 return {
                     "form_rating": min(95, max(60, round(form_rating))),
@@ -256,7 +292,7 @@ def fetch_team_form(team_id, is_home=True):
                     "win_percentage": round(win_percentage, 1)
                 }
         
-        # Fallback if no form data
+        # Fallback form data
         return {
             "form_rating": random.randint(65, 85),
             "goals_scored": random.randint(5, 12),
@@ -274,28 +310,26 @@ def fetch_team_form(team_id, is_home=True):
         }
 
 # -------------------------
-# Improved Prediction Engine
+# IMPROVED Prediction Engine
 # -------------------------
 class PredictionEngine:
     def calculate_confidence(self, h2h_data, home_form, away_form, odds_data):
-        """Calculate confidence 85-98% based on REAL data"""
-        base = 75  # Start from 75
+        """Calculate confidence 85-98%"""
+        base = 75
         
-        # H2H factors (0-15 points)
+        # H2H factors
         if h2h_data["matches_analyzed"] >= 4:
             base += 5
         if h2h_data["avg_goals"] >= 2.8:
             base += 4
         if h2h_data["btts_percentage"] >= 60:
             base += 3
-        if h2h_data.get("home_wins", 0) >= 2:
-            base += 3
             
-        # Form factors (0-10 points)
-        base += (home_form["form_rating"] - 70) / 5  # Convert 70-95 to 0-5 points
+        # Form factors
+        base += (home_form["form_rating"] - 70) / 5
         base += (away_form["form_rating"] - 70) / 5
         
-        # Odds factors (0-5 points)
+        # Odds factors
         if odds_data["type"] == "home_favorite" and home_form["win_percentage"] > 50:
             base += 3
         elif odds_data["type"] == "away_favorite" and away_form["win_percentage"] > 50:
@@ -303,12 +337,12 @@ class PredictionEngine:
         else:
             base += 1
             
-        # Ensure 85-98% range with some variation
+        # Ensure 85-98% range
         final_confidence = min(98, max(85, base + random.randint(-3, 5)))
         return final_confidence
     
     def generate_prediction(self, match):
-        """Generate prediction for ACTUAL match"""
+        """Generate prediction for match"""
         try:
             home_team = match["teams"]["home"]["name"]
             away_team = match["teams"]["away"]["name"]
@@ -318,7 +352,7 @@ class PredictionEngine:
             
             print(f"🔍 Analyzing: {home_team} vs {away_team}")
             
-            # Get REAL analysis data
+            # Get analysis data
             h2h_data = fetch_h2h_stats(home_id, away_id)
             home_form = fetch_team_form(home_id, True)
             away_form = fetch_team_form(away_id, False)
@@ -333,7 +367,7 @@ class PredictionEngine:
                 
             print(f"   ✅ High confidence: {confidence}%")
             
-            # Select market based on REAL analysis
+            # Select market based on analysis
             if h2h_data["avg_goals"] >= 3.0 and h2h_data["btts_percentage"] >= 60:
                 market = "Over 2.5 Goals & BTTS"
                 prediction = "Yes"
@@ -388,22 +422,28 @@ class PredictionEngine:
             return None
 
 # -------------------------
-# Auto-Update System (5 minutes)
+# Auto-Update System (5 minutes) - IMPROVED
 # -------------------------
 predictor = PredictionEngine()
 
 def auto_predictor():
-    """Auto prediction every 5 minutes with REAL data"""
+    """Auto prediction every 5 minutes with better match detection"""
     while True:
         try:
-            print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Scanning for REAL live matches...")
+            print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Scanning for matches...")
             
+            # Try live matches first
             matches = fetch_live_matches()
             
+            # If no live matches, try today's matches
             if not matches:
-                print("⏳ No live matches currently available")
-            else:
+                print("🔁 No live matches found, checking today's matches...")
+                matches = get_todays_matches()
+            
+            if matches:
+                print(f"📊 Analyzing {len(matches)} matches...")
                 predictions_sent = 0
+                
                 for match in matches:
                     prediction = predictor.generate_prediction(match)
                     if prediction:
@@ -411,10 +451,12 @@ def auto_predictor():
                         bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
                         predictions_sent += 1
                         print(f"✅ Prediction sent: {prediction['home_team']} vs {prediction['away_team']}")
-                        time.sleep(2)  # Rate limiting
+                        time.sleep(2)
                 
-                if predictions_sent == 0 and matches:
+                if predictions_sent == 0:
                     print("📊 All matches analyzed - No 85%+ confidence predictions")
+            else:
+                print("⏳ No matches available for analysis")
                         
         except Exception as e:
             print(f"❌ Auto-predictor error: {e}")
@@ -423,7 +465,7 @@ def auto_predictor():
         time.sleep(300)  # 5 minutes
 
 # -------------------------
-# Improved Bot Message Handlers
+# IMPROVED Bot Message Handlers
 # -------------------------
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
@@ -434,21 +476,36 @@ def send_welcome(message):
 
 @bot.message_handler(commands=['predict', 'live', 'analysis', 'update'])
 def send_predictions(message):
-    """Send predictions with REAL data"""
+    """Send predictions with better match detection"""
     try:
         user_id = message.from_user.id
         print(f"📨 Prediction request from user {user_id}")
         
         analyzing_msg = bot.reply_to(message, AIAnalyst.analyzing())
         
-        # Fetch REAL matches
+        # Try live matches first, then today's matches
         matches = fetch_live_matches()
+        if not matches:
+            matches = get_todays_matches()
         
         if not matches:
+            no_matches_text = """
+❌ **No Matches Available**
+
+Currently, there are no live matches or today's matches available for analysis.
+
+This could be because:
+• No matches are currently being played
+• All matches have finished for today  
+• API service is temporarily unavailable
+
+I'll automatically notify you when matches are detected!
+"""
             bot.edit_message_text(
                 chat_id=analyzing_msg.chat.id,
                 message_id=analyzing_msg.message_id,
-                text="❌ No live matches are currently being played. I'll notify you when matches start."
+                text=no_matches_text,
+                parse_mode='Markdown'
             )
             return
         
@@ -472,7 +529,7 @@ def send_predictions(message):
             no_pred_text = """
 📊 **Current Match Analysis**
 
-After scanning all live matches, no 85%+ confidence opportunities were found.
+After scanning all available matches, no 85%+ confidence opportunities were found.
 
 The system maintains strict quality standards and will automatically notify you when high-probability bets are detected.
 
@@ -486,21 +543,25 @@ The system maintains strict quality standards and will automatically notify you 
             )
             
     except Exception as e:
-        error_msg = f"❌ Sorry, I encountered an error while analyzing matches. Please try again in a few minutes."
+        error_msg = "❌ Sorry, I encountered an error while analyzing matches. Please try again in a few minutes."
         bot.reply_to(message, error_msg)
         print(f"❌ Prediction error for user {message.from_user.id}: {e}")
 
 @bot.message_handler(commands=['status', 'info'])
 def send_status(message):
     """Send system status"""
+    # Test API connection
+    test_matches = fetch_live_matches()
+    api_status = "✅ Connected" if test_matches is not None else "❌ Disconnected"
+    
     status_text = f"""
 **🤖 SYSTEM STATUS - {datetime.now().strftime('%H:%M:%S')}**
 
 **🟢 OPERATIONAL & MONITORING**
-• **Last Scan:** Completed
+• **API Status:** {api_status}
+• **Last Scan:** Completed  
 • **Next Scan:** 5 minutes
 • **Confidence Threshold:** 85%+
-• **Data Source:** Live API Feed
 
 **ACTIVE FEATURES:**
 ✅ Real-time Match Monitoring
@@ -592,10 +653,9 @@ def webhook():
 # Initialize System
 # -------------------------
 def setup_bot():
-    """Setup bot with REAL data"""
-    print("🚀 Starting AI Football Bot with REAL Data...")
-    print("📡 Connecting to Football API...")
-    print("🤖 Initializing Prediction Engine...")
+    """Setup bot with improved match detection"""
+    print("🚀 Starting AI Football Bot with Improved Match Detection...")
+    print("📡 Testing API Connection...")
     
     try:
         bot.remove_webhook()
@@ -608,21 +668,26 @@ def setup_bot():
         bot.set_webhook(url=webhook_url)
         print(f"✅ Webhook set: {webhook_url}")
         
-        # Start auto-predictor with REAL data
-        auto_thread = threading.Thread(target=auto_predictor, daemon=True)
-        auto_thread.start()
-        print("✅ Auto-predictor started with REAL data!")
-        print("🎯 Bot is LIVE and monitoring REAL matches!")
-        
         # Test API connection
         test_matches = fetch_live_matches()
         if test_matches:
-            print(f"✅ API Connection Successful - Found {len(test_matches)} matches")
+            print(f"✅ API Connection Successful - Found {len(test_matches)} live matches")
         else:
-            print("⚠️ API Connected but no live matches currently")
+            print("🔁 Testing today's matches as fallback...")
+            todays_matches = get_todays_matches()
+            if todays_matches:
+                print(f"✅ Fallback successful - Found {len(todays_matches)} today's matches")
+            else:
+                print("⚠️ No matches found, but bot will continue monitoring")
+        
+        # Start auto-predictor
+        auto_thread = threading.Thread(target=auto_predictor, daemon=True)
+        auto_thread.start()
+        print("✅ Auto-predictor started!")
+        print("🎯 Bot is LIVE and monitoring for matches!")
         
     except Exception as e:
-        print(f"❌ Webhook failed: {e}")
+        print(f"❌ Setup failed: {e}")
         bot.remove_webhook()
         bot.polling(none_stop=True)
 

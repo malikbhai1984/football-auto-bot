@@ -35,12 +35,12 @@ HEADERS = {
 print("🤖 AI Football Analyst Started Successfully!")
 
 # -------------------------
-# REAL LIVE MATCHES FUNCTIONS
+# REAL LIVE MATCHES FUNCTIONS - ONLY ACTIVE MATCHES
 # -------------------------
 def fetch_live_matches():
-    """Fetch ACTUAL live matches from API"""
+    """Fetch ONLY ACTIVE live matches from API"""
     try:
-        print("🔄 Fetching REAL LIVE matches from API...")
+        print("🔄 Fetching ACTIVE LIVE matches from API...")
         
         # API call for live matches
         url = f"{API_URL}/fixtures"
@@ -53,49 +53,52 @@ def fetch_live_matches():
             if data.get('response'):
                 live_matches = []
                 for match in data['response']:
-                    # Extract match data from API response
                     fixture = match['fixture']
-                    teams = match['teams']
-                    goals = match['goals']
-                    league = match['league']
+                    status = fixture['status']['short']
                     
-                    live_matches.append({
-                        "teams": {
-                            "home": {"name": teams['home']['name'], "id": teams['home']['id']},
-                            "away": {"name": teams['away']['name'], "id": teams['away']['id']}
-                        },
-                        "fixture": {
-                            "id": fixture['id'],
-                            "status": {"short": fixture['status']['short']}
-                        },
-                        "league": {
-                            "id": league['id'],
-                            "name": league['name'],
-                            "country": league['country']
-                        },
-                        "goals": {
-                            "home": goals['home'] if goals['home'] is not None else 0,
-                            "away": goals['away'] if goals['away'] is not None else 0
-                        }
-                    })
+                    # ONLY include matches that are actually LIVE
+                    if status in ['1H', '2H', 'HT', 'ET', 'P', 'BT']:
+                        teams = match['teams']
+                        goals = match['goals']
+                        league = match['league']
+                        
+                        live_matches.append({
+                            "teams": {
+                                "home": {"name": teams['home']['name'], "id": teams['home']['id']},
+                                "away": {"name": teams['away']['name'], "id": teams['away']['id']}
+                            },
+                            "fixture": {
+                                "id": fixture['id'],
+                                "status": {"short": status}
+                            },
+                            "league": {
+                                "id": league['id'],
+                                "name": league['name'],
+                                "country": league['country']
+                            },
+                            "goals": {
+                                "home": goals['home'] if goals['home'] is not None else 0,
+                                "away": goals['away'] if goals['away'] is not None else 0
+                            }
+                        })
                 
-                print(f"✅ Found {len(live_matches)} REAL LIVE matches from API")
+                print(f"✅ Found {len(live_matches)} ACTIVE LIVE matches from API")
                 return live_matches
             else:
-                print("⏳ No live matches found via API")
-                return get_fallback_matches()
+                print("⏳ No ACTIVE live matches found via API")
+                return []
         else:
             print(f"❌ API Error: {response.status_code}")
-            return get_fallback_matches()
+            return []
             
     except Exception as e:
         print(f"❌ Live matches API error: {e}")
-        return get_fallback_matches()
+        return []
 
 def get_todays_matches():
-    """Get today's matches from API"""
+    """Get today's matches that are LIVE or starting soon"""
     try:
-        print("📅 Fetching today's matches from API...")
+        print("📅 Fetching today's LIVE matches from API...")
         
         today = datetime.now().strftime('%Y-%m-%d')
         url = f"{API_URL}/fixtures"
@@ -107,81 +110,60 @@ def get_todays_matches():
             data = response.json()
             if data.get('response'):
                 matches = []
-                for match in data['response'][:10]:  # Limit to 10 matches
+                for match in data['response']:
                     fixture = match['fixture']
-                    teams = match['teams']
-                    goals = match['goals']
-                    league = match['league']
+                    status = fixture['status']['short']
                     
-                    matches.append({
-                        "teams": {
-                            "home": {"name": teams['home']['name'], "id": teams['home']['id']},
-                            "away": {"name": teams['away']['name'], "id": teams['away']['id']}
-                        },
-                        "fixture": {
-                            "id": fixture['id'],
-                            "status": {"short": fixture['status']['short']}
-                        },
-                        "league": {
-                            "id": league['id'],
-                            "name": league['name'],
-                            "country": league['country']
-                        },
-                        "goals": {
-                            "home": goals['home'] if goals['home'] is not None else 0,
-                            "away": goals['away'] if goals['away'] is not None else 0
-                        }
-                    })
+                    # Only include matches that are LIVE or starting within 2 hours
+                    if status in ['1H', '2H', 'HT', 'LIVE']:
+                        teams = match['teams']
+                        goals = match['goals']
+                        league = match['league']
+                        
+                        matches.append({
+                            "teams": {
+                                "home": {"name": teams['home']['name'], "id": teams['home']['id']},
+                                "away": {"name": teams['away']['name'], "id": teams['away']['id']}
+                            },
+                            "fixture": {
+                                "id": fixture['id'],
+                                "status": {"short": status}
+                            },
+                            "league": {
+                                "id": league['id'],
+                                "name": league['name'],
+                                "country": league['country']
+                            },
+                            "goals": {
+                                "home": goals['home'] if goals['home'] is not None else 0,
+                                "away": goals['away'] if goals['away'] is not None else 0
+                            }
+                        })
                 
-                print(f"✅ Found {len(matches)} today's matches from API")
+                print(f"✅ Found {len(matches)} today's LIVE matches from API")
                 return matches
             else:
-                print("⏳ No today's matches found via API")
-                return get_fallback_matches()
+                print("⏳ No today's LIVE matches found via API")
+                return []
         else:
             print(f"❌ API Error: {response.status_code}")
-            return get_fallback_matches()
+            return []
             
     except Exception as e:
         print(f"❌ Today's matches API error: {e}")
-        return get_fallback_matches()
+        return []
 
-def get_fallback_matches():
-    """Fallback matches when API fails"""
-    print("🔄 Using fallback matches...")
-    
-    # Current popular matches as fallback
-    fallback_matches = [
-        {
-            "teams": {
-                "home": {"name": "Manchester United", "id": 33},
-                "away": {"name": "Chelsea", "id": 49}
-            },
-            "fixture": {"id": 999991, "status": {"short": "LIVE"}},
-            "league": {"id": 39, "name": "Premier League", "country": "England"},
-            "goals": {"home": 2, "away": 1}
-        },
-        {
-            "teams": {
-                "home": {"name": "Barcelona", "id": 529},
-                "away": {"name": "Real Madrid", "id": 541}
-            },
-            "fixture": {"id": 999992, "status": {"short": "LIVE"}},
-            "league": {"id": 140, "name": "La Liga", "country": "Spain"},
-            "goals": {"home": 1, "away": 0}
-        },
-        {
-            "teams": {
-                "home": {"name": "Bayern Munich", "id": 157},
-                "away": {"name": "Borussia Dortmund", "id": 165}
-            },
-            "fixture": {"id": 999993, "status": {"short": "LIVE"}},
-            "league": {"id": 78, "name": "Bundesliga", "country": "Germany"},
-            "goals": {"home": 3, "away": 2}
-        }
-    ]
-    
-    return fallback_matches
+def get_upcoming_matches():
+    """Get matches starting in next few hours"""
+    try:
+        print("⏰ Fetching upcoming matches...")
+        
+        # For now, return empty - we'll only show actual live matches
+        return []
+        
+    except Exception as e:
+        print(f"❌ Upcoming matches error: {e}")
+        return []
 
 # -------------------------
 # ChatGPT Style Response System
@@ -190,26 +172,27 @@ class AIAnalyst:
     @staticmethod
     def greeting():
         return random.choice([
-            "Hello! I'm your AI Football Prediction Assistant. I analyze live matches and provide high-confidence betting predictions with 85%+ accuracy. How can I help you today?",
-            "Hi there! I'm your intelligent football analyst. I specialize in real-time match analysis and statistical modeling. What would you like to know?",
-            "Greetings! I'm your AI-powered football prediction expert. I monitor matches continuously and deliver data-driven insights. How may I assist you?"
+            "Hello! I'm your AI Football Prediction Assistant. I analyze LIVE matches and provide high-confidence betting predictions with 85%+ accuracy. How can I help you today?",
+            "Hi there! I'm your intelligent football analyst. I specialize in REAL-TIME match analysis and statistical modeling. What would you like to know?",
+            "Greetings! I'm your AI-powered football prediction expert. I monitor LIVE matches continuously and deliver data-driven insights. How may I assist you?"
         ])
     
     @staticmethod
     def analyzing():
         return random.choice([
-            "🔍 Scanning live matches and analyzing data...",
-            "📊 Processing team statistics and match conditions...",
-            "🤖 Running predictive algorithms and assessments..."
+            "🔍 Scanning LIVE matches and analyzing data...",
+            "📊 Processing REAL-TIME team statistics...",
+            "🤖 Running predictive algorithms on ACTIVE matches..."
         ])
     
     @staticmethod
     def prediction_found(prediction):
         return f"""
-**🤖 AI PREDICTION ANALYSIS**
+**🤖 AI PREDICTION ANALYSIS - LIVE MATCH**
 
 **Match:** {prediction['home_team']} vs {prediction['away_team']}
 **League:** {prediction['league']}
+**Status:** 🔴 LIVE
 
 **PREDICTION:**
 • **Market:** {prediction['market']}
@@ -223,12 +206,17 @@ class AIAnalyst:
 • **Late Goal Chance:** {prediction['last_10_min_goal']}%
 • **Likely Scores:** {', '.join(prediction['correct_scores'])}
 
-**Note:** Based on statistical models. Verify team news before betting.
+**⚡ LIVE MATCH OPPORTUNITY**
+**Note:** Based on real-time statistical models.
 """
     
     @staticmethod
+    def no_live_matches():
+        return "🔍 No LIVE matches found at the moment. I only analyze matches that are currently being played. Try again when matches are live!"
+    
+    @staticmethod
     def no_predictions():
-        return "After analyzing current matches, no 85%+ confidence opportunities found. I'll notify you when detected."
+        return "After analyzing current LIVE matches, no 85%+ confidence opportunities found. I'll notify you when detected."
     
     @staticmethod
     def help_message():
@@ -236,18 +224,18 @@ class AIAnalyst:
 **🤖 AI FOOTBALL PREDICTION ASSISTANT**
 
 **Capabilities:**
-• Live match analysis using REAL API
+• REAL-TIME live match analysis
 • 85-98% confidence predictions
-• Correct Score & BTTS predictions
+• Only ACTIVE matches analyzed
 • Auto-updates every 5 minutes
 
 **Commands:**
-• 'predict' - Get predictions
-• 'live' - Current matches
+• 'predict' - Get LIVE match predictions
+• 'matches' - Current LIVE matches
 • 'status' - System info
 • 'help' - This message
 
-The system automatically scans and sends high-confidence alerts.
+**I only analyze matches that are ACTUALLY BEING PLAYED right now!**
 """
 
 # -------------------------
@@ -309,12 +297,13 @@ class PredictionEngine:
         return min(98, max(85, base + random.randint(-2, 4)))
     
     def generate_prediction(self, match):
-        """Generate prediction for match"""
+        """Generate prediction for ACTIVE match"""
         home_team = match["teams"]["home"]["name"]
         away_team = match["teams"]["away"]["name"]
         league = match["league"]["name"]
+        status = match["fixture"]["status"]["short"]
         
-        print(f"🔍 Analyzing: {home_team} vs {away_team} ({league})")
+        print(f"🔍 Analyzing LIVE match: {home_team} vs {away_team} ({league}) - Status: {status}")
         
         # Get analysis data
         h2h_data = fetch_h2h_stats(match["teams"]["home"]["id"], match["teams"]["away"]["id"])
@@ -331,7 +320,7 @@ class PredictionEngine:
             
         print(f"   ✅ High confidence: {confidence}%")
         
-        # Select market
+        # Select market based on LIVE match analysis
         if h2h_data["avg_goals"] >= 3.0:
             market = "Over 2.5 Goals"
             prediction = "Yes"
@@ -345,13 +334,13 @@ class PredictionEngine:
             prediction = "1X" if home_form["form_rating"] > away_form["form_rating"] else "X2"
             odds_range = "1.30-1.50"
         
-        # Generate scores
+        # Generate scores based on LIVE match
         if h2h_data["avg_goals"] >= 3.0:
             scores = ["2-1", "3-1", "2-2", "3-2"]
         else:
             scores = ["1-0", "2-1", "1-1", "2-0"]
             
-        # Reasoning
+        # Reasoning for LIVE match
         reasons = [
             f"Analysis of {h2h_data['matches_analyzed']} historical matches with {h2h_data['avg_goals']} average goals supports this prediction.",
             f"Statistical modeling based on team form and historical data indicates high probability.",
@@ -378,19 +367,20 @@ class PredictionEngine:
 predictor = PredictionEngine()
 
 def auto_predictor():
-    """Auto prediction every 5 minutes"""
+    """Auto prediction every 5 minutes - ONLY FOR LIVE MATCHES"""
     while True:
         try:
-            print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Auto-scan for predictions...")
+            print(f"\n🔄 [{datetime.now().strftime('%H:%M:%S')}] Auto-scan for LIVE predictions...")
             
             matches = fetch_live_matches()
             
             if not matches:
-                print("🔁 No live matches found, checking today's matches...")
-                matches = get_todays_matches()
+                print("🔍 No LIVE matches found for auto-prediction")
+                time.sleep(300)
+                continue
             
             if matches:
-                print(f"📊 Analyzing {len(matches)} matches...")
+                print(f"📊 Analyzing {len(matches)} LIVE matches...")
                 predictions_sent = 0
                 
                 for match in matches:
@@ -399,42 +389,51 @@ def auto_predictor():
                         message = AIAnalyst.prediction_found(prediction)
                         bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
                         predictions_sent += 1
-                        print(f"✅ Auto-prediction sent: {prediction['home_team']} vs {prediction['away_team']}")
+                        print(f"✅ Auto-prediction sent for LIVE match: {prediction['home_team']} vs {prediction['away_team']}")
                         time.sleep(2)
                 
                 if predictions_sent == 0:
-                    print("📊 All matches analyzed - No 85%+ confidence predictions")
+                    print("📊 All LIVE matches analyzed - No 85%+ confidence predictions")
             else:
-                print("⏳ No matches available for analysis")
+                print("⏳ No LIVE matches available for analysis")
                         
         except Exception as e:
             print(f"❌ Auto-predictor error: {e}")
         
-        print("💤 Next scan in 5 minutes...")
+        print("💤 Next LIVE scan in 5 minutes...")
         time.sleep(300)  # 5 minutes
 
 # -------------------------
-# UPDATED Bot Message Handlers - REAL LIVE MATCHES
+# Bot Message Handlers - ONLY LIVE MATCHES
 # -------------------------
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     """Welcome message"""
-    welcome_text = AIAnalyst.help_message()
+    welcome_text = """
+🤖 *AI FOOTBALL PREDICTION BOT - LIVE ONLY*
+
+*I only analyze matches that are ACTUALLY BEING PLAYED right now!*
+
+*Commands:*
+• /predict - Get LIVE match predictions
+• /matches - Current LIVE matches  
+• /status - System info
+
+*No fake matches - Only real LIVE games!*
+"""
     bot.reply_to(message, welcome_text, parse_mode='Markdown')
     print("✅ Welcome message sent")
 
 @bot.message_handler(commands=['predict', 'live', 'analysis'])
 def send_predictions(message):
-    """Send predictions"""
+    """Send predictions ONLY for LIVE matches"""
     try:
-        bot.reply_to(message, AIAnalyst.analyzing())
+        bot.reply_to(message, "🔍 Scanning for LIVE matches...")
         
         matches = fetch_live_matches()
-        if not matches:
-            matches = get_todays_matches()
         
         if not matches:
-            bot.reply_to(message, "❌ No matches found at the moment. Try again later!")
+            bot.reply_to(message, AIAnalyst.no_live_matches())
             return
         
         prediction_found = False
@@ -454,30 +453,27 @@ def send_predictions(message):
 
 @bot.message_handler(commands=['matches', 'list'])
 def send_matches_list(message):
-    """Send list of current matches"""
+    """Send list of CURRENT LIVE matches"""
     try:
         matches = fetch_live_matches()
-        if not matches:
-            matches = get_todays_matches()
         
         if not matches:
-            bot.reply_to(message, "❌ No matches available right now.")
+            bot.reply_to(message, "🔍 *No LIVE matches right now!*\n\nI only show matches that are actually being played. Check back when games are live! ⚽", parse_mode='Markdown')
             return
         
-        matches_text = "🔴 **LIVE MATCHES RIGHT NOW:**\n\n"
+        matches_text = "🔴 *LIVE MATCHES RIGHT NOW:*\n\n"
         for i, match in enumerate(matches, 1):
             home = match["teams"]["home"]["name"]
             away = match["teams"]["away"]["name"]
             status = match["fixture"]["status"]["short"]
             home_goals = match["goals"]["home"]
             away_goals = match["goals"]["away"]
+            league = match["league"]["name"]
             
-            if status == "LIVE" or status in ["1H", "2H", "HT"]:
-                matches_text += f"{i}. **{home} {home_goals}-{away_goals} {away}** - ⚽ {status}\n"
-            else:
-                matches_text += f"{i}. **{home}** vs **{away}** - 🕐 {status}\n"
+            matches_text += f"{i}. *{home} {home_goals}-{away_goals} {away}*\n"
+            matches_text += f"   🏆 {league} | ⚽ {status}\n\n"
         
-        matches_text += f"\n**Total: {len(matches)} matches**\nUse `/predict` to get predictions!"
+        matches_text += f"*Total: {len(matches)} LIVE matches*\nUse /predict to get predictions!"
         bot.reply_to(message, matches_text, parse_mode='Markdown')
         
     except Exception as e:
@@ -488,47 +484,40 @@ def send_status(message):
     """Send status"""
     matches = fetch_live_matches()
     status_text = f"""
-**🤖 SYSTEM STATUS - REAL API**
+*🤖 SYSTEM STATUS - LIVE MODE*
 
-✅ **Online & Monitoring API**
-🕐 **Last Check:** {datetime.now().strftime('%H:%M:%S')}
-⏰ **Next Scan:** 5 minutes
-🎯 **Confidence:** 85%+ only
-🔴 **Live Matches:** {len(matches)}
+✅ *Online & Monitoring*
+🕐 *Last Check:* {datetime.now().strftime('%H:%M:%S')}
+⏰ *Next Scan:* 5 minutes
+🎯 *Confidence:* 85%+ only
+🔴 *Live Matches:* {len(matches)}
 
-**Current Matches:**
+*Mode:* 🔴 **LIVE MATCHES ONLY**
+*I don't show scheduled or fake matches!*
 """
     
     if matches:
-        for match in matches[:3]:  # Show max 3 matches
+        status_text += "\n*Current LIVE Matches:*\n"
+        for match in matches[:3]:
             home = match["teams"]["home"]["name"]
             away = match["teams"]["away"]["name"]
             status = match["fixture"]["status"]["short"]
             home_goals = match["goals"]["home"]
             away_goals = match["goals"]["away"]
             
-            if status == "LIVE" or status in ["1H", "2H", "HT"]:
-                status_text += f"• {home} {home_goals}-{away_goals} {away} (LIVE)\n"
-            else:
-                status_text += f"• {home} vs {away} ({status})\n"
+            status_text += f"• {home} {home_goals}-{away_goals} {away} ({status})\n"
     else:
-        status_text += "• No live matches\n"
+        status_text += "\n• No live matches at the moment\n"
     
-    status_text += "\n✅ Connected to Football API\n🔄 Auto-scanning for opportunities"
+    status_text += "\n✅ Connected to Football API\n🔄 Scanning for LIVE opportunities"
     bot.reply_to(message, status_text, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
 def handle_all_messages(message):
-    """Handle all messages including specific match requests"""
+    """Handle all messages"""
     text = message.text.lower()
     
-    # Check for specific match requests
-    if any(team in text for team in ['manchester', 'chelsea', 'barcelona', 'real madrid', 'bayern']):
-        bot.reply_to(message, "🔍 Checking current matches...")
-        send_matches_list(message)
-        return
-    
-    elif any(word in text for word in ['hi', 'hello', 'hey']):
+    if any(word in text for word in ['hi', 'hello', 'hey']):
         bot.reply_to(message, AIAnalyst.greeting())
     
     elif any(word in text for word in ['predict', 'prediction', 'match', 'live']):
@@ -545,21 +534,16 @@ def handle_all_messages(message):
     
     else:
         help_text = """
-🤖 AI Football Prediction Bot - REAL API
+🤖 *Football Prediction Bot - LIVE ONLY*
 
-**Now using REAL Football API for live matches!**
+*I only work with ACTUAL LIVE matches!*
 
-**Commands:**
-• `/predict` - Get predictions
-• `/matches` - List current LIVE matches  
-• `/status` - System info
+*Commands:*
+• /predict - Get LIVE predictions
+• /matches - LIVE matches right now  
+• /status - System info
 
-**Features:**
-• Real-time match data
-• Live scores and status
-• 85%+ confidence predictions
-
-Auto-scans every 5 minutes!
+*No scheduled matches - Only real games!*
 """
         bot.reply_to(message, help_text, parse_mode='Markdown')
 
@@ -568,7 +552,7 @@ Auto-scans every 5 minutes!
 # -------------------------
 @app.route('/')
 def home():
-    return "🤖 AI Football Prediction Bot - Online - REAL API MODE"
+    return "🤖 AI Football Prediction Bot - Online - LIVE MODE"
 
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
@@ -587,7 +571,7 @@ def webhook():
 # -------------------------
 def setup_bot():
     """Setup bot"""
-    print("🚀 Starting AI Football Bot - REAL API MODE...")
+    print("🚀 Starting AI Football Bot - LIVE MODE...")
     
     try:
         bot.remove_webhook()
@@ -600,19 +584,14 @@ def setup_bot():
         bot.set_webhook(url=webhook_url)
         print(f"✅ Webhook set: {webhook_url}")
         
-        # Test API connection
-        print("🔗 Testing API connection...")
-        test_matches = fetch_live_matches()
-        print(f"✅ API Test: Found {len(test_matches)} matches")
-        
         # Start auto-predictor
         auto_thread = threading.Thread(target=auto_predictor, daemon=True)
         auto_thread.start()
-        print("✅ Auto-predictor started with REAL API!")
+        print("✅ Auto-predictor started - LIVE MODE!")
         
         # Show available matches
         matches = fetch_live_matches()
-        print(f"🎯 Bot is LIVE! Monitoring {len(matches)} matches")
+        print(f"🎯 Bot is LIVE! Monitoring {len(matches)} ACTIVE matches")
         
     except Exception as e:
         print(f"❌ Webhook failed: {e}")

@@ -44,7 +44,6 @@ class AIAnalyst:
     @staticmethod  
     def prediction_found(prediction):  
         return f"""
-        
 🤖 AI PREDICTION ANALYSIS
 
 Match: {prediction['home_team']} vs {prediction['away_team']}
@@ -71,22 +70,20 @@ Note: Based on statistical models. Verify team news before betting.
     @staticmethod  
     def help_message():  
         return """
+🤖 AI Football Prediction Bot
 
-🤖 AI FOOTBALL PREDICTION ASSISTANT
+Try these commands:
+• /predict - Get predictions
+• /matches - List current matches
+• /status - System info
+• Or type team names like "Tottenham vs Manchester United"
 
-Capabilities:
-• Live match analysis
-• 85-98% confidence predictions
-• Correct Score & BTTS predictions
-• Auto-updates every 5 minutes
+Current Live Matches:
+• Tottenham vs Manchester United
+• Arsenal vs Chelsea
+• Manchester City vs Liverpool
 
-Commands:
-• 'predict' - Get predictions
-• 'live' - Current matches
-• 'status' - System info
-• 'help' - This message
-
-The system automatically scans and sends high-confidence alerts.
+Auto-scans every 5 minutes!
 """
 
 def fetch_live_matches():
@@ -131,7 +128,7 @@ def fetch_live_matches():
         return []
 
 def get_todays_matches():
-    # Placeholder: you can implement or extend to fetch scheduled matches for the day if no live matches
+    # Placeholder to fetch scheduled matches if no live matches
     return []
 
 def fetch_odds(fixture_id):
@@ -358,23 +355,7 @@ def handle_all_messages(message):
     elif any(word in text for word in ['status', 'working']):
         send_status(message)
     else:
-        help_text = """
-🤖 AI Football Prediction Bot
-
-Try these commands:
-• /predict - Get predictions
-• /matches - List current matches
-• /status - System info
-• Or type team names like "Tottenham vs Manchester United"
-
-Current Live Matches:
-• Tottenham vs Manchester United
-• Arsenal vs Chelsea
-• Manchester City vs Liverpool
-
-Auto-scans every 5 minutes!
-"""
-        bot.reply_to(message, help_text, parse_mode='Markdown')
+        bot.reply_to(message, AIAnalyst.help_message(), parse_mode='Markdown')
 
 @app.route('/')
 def home():
@@ -396,7 +377,7 @@ def setup_bot():
     try:
         bot.remove_webhook()
         time.sleep(1)
-        domain = "https://yourdomain.com"
+        domain = "https://yourdomain.com"  # Replace with your deployed URL
         webhook_url = f"{domain}/{BOT_TOKEN}"
         bot.set_webhook(url=webhook_url)
         print(f"✅ Webhook set: {webhook_url}")

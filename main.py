@@ -4,7 +4,7 @@ import time
 import random
 from datetime import datetime
 
-# Your Credentials - CHANGE THESE!
+# Your Credentials
 BOT_TOKEN = "7125854817:AAE4wO3o1JXvNzz-a1uVwv_5qG7B9nDp-Z0"
 API_KEY = "839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
 

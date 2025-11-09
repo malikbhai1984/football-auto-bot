@@ -7,3 +7,6 @@ hypercorn==0.16.0
 python-dotenv==1.0.1
 
 
+
+
+pytelegrambotapi==4.15.2

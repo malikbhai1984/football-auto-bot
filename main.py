@@ -1,158 +1,106 @@
 import os
-import requests
-import threading
 import time
-from flask import Flask
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import threading
+import requests
+from flask import Flask, request, jsonify
 
-# --- Configuration ---
-BOT_TOKEN = "8336882129:AAFZ4oVAY_cEyy_JTi5A0fo12TnTXSEI8as"          # ⚠️ apna Telegram Bot Token yahan daalna
-OWNER_CHAT_ID = "MyBetAlert_Bot" # ⚠️ optional: apna chat_id
-
+# --- CONFIG ---
+BOT_TOKEN = "8336882129:AAFZ4oVAY_cEyy_JTi5A0fo12TnTXSEI8as"   # ✅ MyBetAlert_Bot token
+OWNER_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"  # ⚠️ Apna chat_id daalo yahan (e.g., 123456789)
 API_KEY = "839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
 API_URL = "https://v3.football.api-sports.io"
-HEADERS = {
-    "x-apisports-key": API_KEY
-}
+HEADERS = {"x-apisports-key": API_KEY}
 
 app = Flask(__name__)
 live_thread_running = False
 
 
-# --- Function to Fetch Live Matches ---
+# --- Function: Get Live Matches from API ---
 def fetch_live_matches():
-    """Fetch actual live matches from API-Football"""
     try:
         print("🔄 Fetching LIVE matches from API...")
         url = f"{API_URL}/fixtures?live=all"
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        
-        if response.status_code != 200:
-            print(f"⚠️ API Error: {response.status_code} - {response.text}")
+        r = requests.get(url, headers=HEADERS, timeout=10)
+        if r.status_code != 200:
+            print(f"⚠️ API error: {r.status_code}")
             return []
-        
-        data = response.json()
-        matches = data.get("response", [])
-        
-        if not matches:
-            print("⏳ No live matches found right now.")
-            return []
-        
-        print(f"✅ Found {len(matches)} live matches!")
-        for m in matches:
-            home = m["teams"]["home"]["name"]
-            away = m["teams"]["away"]["name"]
-            status = m["fixture"]["status"]["short"]
-            print(f"   🏆 {home} vs {away} | Status: {status}")
-        
-        return matches
-
+        data = r.json().get("response", [])
+        return data
     except Exception as e:
-        print(f"❌ Error fetching live matches: {e}")
+        print(f"❌ Error fetching live data: {e}")
         return []
 
 
-# --- Telegram Bot Commands ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚽ Football Live Bot Activated!\n\nUse /live to see all live matches now.")
+# --- Function: Send Telegram Message ---
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": OWNER_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print(f"⚠️ Telegram send failed: {e}")
 
 
-async def live(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show current live matches"""
-    matches = fetch_live_matches()
-    
-    if not matches:
-        await update.message.reply_text("⏳ No live matches at the moment.")
-        return
-    
-    reply_text = "🔥 *Current Live Matches:*\n\n"
-    for match in matches:
-        home = match["teams"]["home"]["name"]
-        away = match["teams"]["away"]["name"]
-        status = match["fixture"]["status"]["short"]
-        goals_home = match["goals"]["home"]
-        goals_away = match["goals"]["away"]
-        time_now = match["fixture"]["status"]["elapsed"]
-        reply_text += f"🏆 {home} {goals_home} - {goals_away} {away}\n⏱️ {status} ({time_now}’)\n\n"
-    
-    await update.message.reply_text(reply_text, parse_mode="Markdown")
-
-
-async def predict(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Predict simple live outcome based on score"""
-    matches = fetch_live_matches()
-    
-    if not matches:
-        await update.message.reply_text("⏳ No live matches currently running.")
-        return
-    
-    reply_text = "📊 *Live Match Predictions:*\n\n"
-    for match in matches:
-        home = match["teams"]["home"]["name"]
-        away = match["teams"]["away"]["name"]
-        home_goals = match["goals"]["home"]
-        away_goals = match["goals"]["away"]
-        
-        if home_goals > away_goals:
-            pred = f"✅ {home} likely to WIN"
-        elif away_goals > home_goals:
-            pred = f"✅ {away} likely to WIN"
-        else:
-            pred = "⚖️ Match could end DRAW"
-        
-        reply_text += f"{home} vs {away}\nPrediction: {pred}\n\n"
-    
-    await update.message.reply_text(reply_text, parse_mode="Markdown")
-
-
-# --- Auto Thread to Send Live Updates Every 7 Min ---
-def auto_update_thread(application):
+# --- Thread for Auto Updates ---
+def auto_update_thread():
     global live_thread_running
     while live_thread_running:
-        print("🔁 Auto-checking live matches...")
         matches = fetch_live_matches()
         if matches:
-            text = "🕐 *Auto Live Update:*\n\n"
+            msg = "🟢 *Live Football Updates:*\n\n"
             for m in matches:
                 home = m["teams"]["home"]["name"]
                 away = m["teams"]["away"]["name"]
-                score = f"{m['goals']['home']} - {m['goals']['away']}"
+                hgoals = m["goals"]["home"]
+                agoals = m["goals"]["away"]
                 minute = m["fixture"]["status"]["elapsed"]
-                text += f"{home} {score} {away} ({minute}’)\n"
-            application.bot.send_message(chat_id=OWNER_CHAT_ID, text=text, parse_mode="Markdown")
+                msg += f"{home} {hgoals}-{agoals} {away} ({minute}’)\n"
+            send_telegram_message(msg)
+        else:
+            send_telegram_message("⏳ No live matches right now.")
         time.sleep(420)  # every 7 minutes
 
 
-async def autolive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Flask Routes ---
+@app.route('/')
+def home():
+    return jsonify({"status": "MyBetAlert_Bot is active!"})
+
+
+@app.route('/start', methods=['GET'])
+def start_updates():
     global live_thread_running
     if live_thread_running:
-        await update.message.reply_text("🔁 Auto-update already running.")
-    else:
-        live_thread_running = True
-        threading.Thread(target=auto_update_thread, args=(context.application,), daemon=True).start()
-        await update.message.reply_text("✅ Auto Live Updates started! (every 7 minutes)")
+        return "Already running!"
+    live_thread_running = True
+    threading.Thread(target=auto_update_thread, daemon=True).start()
+    return "✅ Auto live updates started (every 7 min)"
 
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@app.route('/stop', methods=['GET'])
+def stop_updates():
     global live_thread_running
     live_thread_running = False
-    await update.message.reply_text("🛑 Auto Live Updates stopped.")
+    return "🛑 Auto updates stopped."
 
 
-# --- Run Flask and Bot Together ---
-def start_bot():
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("live", live))
-    application.add_handler(CommandHandler("predict", predict))
-    application.add_handler(CommandHandler("autolive", autolive))
-    application.add_handler(CommandHandler("stop", stop))
-    
-    print("🤖 Telegram Bot Running...")
-    application.run_polling()
+@app.route('/live', methods=['GET'])
+def manual_live():
+    matches = fetch_live_matches()
+    if not matches:
+        return "⏳ No live matches right now."
+    msg = "🔥 *Current Live Matches:*\n\n"
+    for m in matches:
+        home = m["teams"]["home"]["name"]
+        away = m["teams"]["away"]["name"]
+        hgoals = m["goals"]["home"]
+        agoals = m["goals"]["away"]
+        minute = m["fixture"]["status"]["elapsed"]
+        msg += f"{home} {hgoals}-{agoals} {away} ({minute}’)\n"
+    send_telegram_message(msg)
+    return msg
 
 
 if __name__ == "__main__":
-    threading.Thread(target=start_bot, daemon=True).start()
+    print("🚀 MyBetAlert Football Bot Running...")
     app.run(host="0.0.0.0", port=8000)

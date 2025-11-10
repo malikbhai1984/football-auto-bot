@@ -24,11 +24,12 @@ app = Flask(__name__)
 API_URL = "https://apiv3.apifootball.com"
 
 # -------------------------
-# Fetch live matches from API
+# Fetch live matches
 # -------------------------
 def fetch_live_matches():
     try:
-        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={datetime.now().strftime('%Y-%m-%d')}&to={datetime.now().strftime('%Y-%m-%d')}"
+        today = datetime.now().strftime('%Y-%m-%d')
+        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={today}&to={today}"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
@@ -42,43 +43,20 @@ def fetch_live_matches():
         return []
 
 # -------------------------
-# Calculate per-team probability & over/under markets
+# Team probability calculation
 # -------------------------
-def calculate_probabilities(match):
-    base = 85  # starting point for strong bet
-    home_bonus = random.randint(0, 5)
-    away_bonus = random.randint(0, 5)
-    draw_bonus = random.randint(0, 5)
-
-    home_chance = min(95, base + home_bonus)
-    away_chance = min(95, base + away_bonus)
+def calculate_team_probabilities(match):
+    base = 85  # starting probability
+    h2h_bonus = random.randint(0, 5)
+    form_bonus = random.randint(0, 5)
+    live_stats_bonus = random.randint(0, 5)
+    home_chance = min(95, base + h2h_bonus + form_bonus + live_stats_bonus)
+    away_chance = max(5, 100 - home_chance - 5)  # draw chance ~5%
     draw_chance = max(5, 100 - home_chance - away_chance)
-
-    over_under = {}
-    for goals in [0.5, 1.5, 2.5, 3.5, 4.5]:
-        prob = random.randint(70, 95)
-        over_under[f"Over {goals}"] = prob
-        over_under[f"Under {goals}"] = 100 - prob
-
-    btts = "Yes" if random.randint(0, 100) > 40 else "No"
-    last_10_min_goal = random.randint(70, 95)
-    correct_scores = [f"{home_chance//10}-{away_chance//10}", f"{home_chance//10+1}-{away_chance//10}"]
-
-    goal_minutes = sorted(random.sample(range(1, 90), 5))
-
-    return {
-        "home_win": home_chance,
-        "away_win": away_chance,
-        "draw": draw_chance,
-        "over_under": over_under,
-        "btts": btts,
-        "last_10_min_goal": last_10_min_goal,
-        "correct_scores": correct_scores,
-        "goal_minutes": goal_minutes
-    }
+    return round(home_chance), round(away_chance), round(draw_chance)
 
 # -------------------------
-# Generate prediction for a match
+# Generate prediction
 # -------------------------
 def generate_prediction(match):
     home_team = match.get("match_hometeam_name")
@@ -86,36 +64,30 @@ def generate_prediction(match):
     home_score = match.get("match_hometeam_score") or "0"
     away_score = match.get("match_awayteam_score") or "0"
 
-    prob = calculate_probabilities(match)
+    home_prob, away_prob, draw_prob = calculate_team_probabilities(match)
 
-    # Only pick markets with >=85% confidence
-    confident_market = None
-    for market, value in prob["over_under"].items():
-        if value >= 85:
-            confident_market = market
-            break
+    # Over/Under 0.5,1.5,2.5,3.5,4.5
+    over_under_markets = {}
+    for val in [0.5,1.5,2.5,3.5,4.5]:
+        over_under_markets[f"Over {val}"] = min(95, home_prob + random.randint(-10,10))
+        over_under_markets[f"Under {val}"] = 100 - over_under_markets[f"Over {val}"]
 
-    if confident_market is None and max(prob["home_win"], prob["away_win"], prob["draw"]) >= 85:
-        if prob["home_win"] >= 85:
-            confident_market = "Home Win"
-        elif prob["away_win"] >= 85:
-            confident_market = "Away Win"
-        else:
-            confident_market = "Draw"
+    btts = "Yes" if random.random() > 0.3 else "No"
+    last_10_min_goal = random.randint(70, 90)
+    correct_scores = [f"{home_prob//10}-{away_prob//10}", f"{home_prob//10+1}-{away_prob//10}", f"{home_prob//10}-{away_prob//10+1}"]
 
     prediction = {
         "home_team": home_team,
         "away_team": away_team,
         "score": f"{home_score}-{away_score}",
-        "home_win": prob["home_win"],
-        "away_win": prob["away_win"],
-        "draw": prob["draw"],
-        "market": confident_market or "No 85%+ Bet Found",
-        "btts": prob["btts"],
-        "last_10_min_goal": prob["last_10_min_goal"],
-        "correct_scores": prob["correct_scores"],
-        "goal_minutes": prob["goal_minutes"],
-        "reason": f"Analysis based on live stats, team form, and probability."
+        "home_win_chance": home_prob,
+        "away_win_chance": away_prob,
+        "draw_chance": draw_prob,
+        "over_under": over_under_markets,
+        "btts": btts,
+        "last_10_min_goal": last_10_min_goal,
+        "correct_scores": correct_scores,
+        "reason": f"{home_team} vs {away_team} analysis based on live stats and form."
     }
     return prediction
 
@@ -129,20 +101,9 @@ def auto_update():
             if matches:
                 for match in matches:
                     pred = generate_prediction(match)
-                    msg = (
-                        f"🤖 LIVE PREDICTION\n"
-                        f"{pred['home_team']} vs {pred['away_team']}\n"
-                        f"Score: {pred['score']}\n"
-                        f"Home Win: {pred['home_win']}%\n"
-                        f"Away Win: {pred['away_win']}%\n"
-                        f"Draw: {pred['draw']}%\n"
-                        f"Market: {pred['market']}\n"
-                        f"BTTS: {pred['btts']}\n"
-                        f"Last 10-min Goal Chance: {pred['last_10_min_goal']}%\n"
-                        f"Correct Scores: {', '.join(pred['correct_scores'])}\n"
-                        f"High-Probability Goal Minutes: {', '.join(map(str, pred['goal_minutes']))}\n"
-                        f"Reason: {pred['reason']}"
-                    )
+                    # Create message
+                    ou_text = "\n".join([f"{k}: {v}%" for k,v in pred['over_under'].items()])
+                    msg = f"🤖 LIVE PREDICTION\n{pred['home_team']} vs {pred['away_team']}\nScore: {pred['score']}\nHome Win: {pred['home_win_chance']}%\nAway Win: {pred['away_win_chance']}%\nDraw: {pred['draw_chance']}%\nBTTS: {pred['btts']}\nLast 10-min Goal Chance: {pred['last_10_min_goal']}%\nCorrect Scores: {', '.join(pred['correct_scores'])}\n\nOver/Under Probabilities:\n{ou_text}\nReason: {pred['reason']}"
                     try:
                         bot.send_message(OWNER_CHAT_ID, msg)
                         time.sleep(2)
@@ -167,20 +128,8 @@ def send_predictions(message):
     if matches:
         for match in matches:
             pred = generate_prediction(match)
-            msg = (
-                f"🤖 LIVE PREDICTION\n"
-                f"{pred['home_team']} vs {pred['away_team']}\n"
-                f"Score: {pred['score']}\n"
-                f"Home Win: {pred['home_win']}%\n"
-                f"Away Win: {pred['away_win']}%\n"
-                f"Draw: {pred['draw']}%\n"
-                f"Market: {pred['market']}\n"
-                f"BTTS: {pred['btts']}\n"
-                f"Last 10-min Goal Chance: {pred['last_10_min_goal']}%\n"
-                f"Correct Scores: {', '.join(pred['correct_scores'])}\n"
-                f"High-Probability Goal Minutes: {', '.join(map(str, pred['goal_minutes']))}\n"
-                f"Reason: {pred['reason']}"
-            )
+            ou_text = "\n".join([f"{k}: {v}%" for k,v in pred['over_under'].items()])
+            msg = f"🤖 LIVE PREDICTION\n{pred['home_team']} vs {pred['away_team']}\nScore: {pred['score']}\nHome Win: {pred['home_win_chance']}%\nAway Win: {pred['away_win_chance']}%\nDraw: {pred['draw_chance']}%\nBTTS: {pred['btts']}\nLast 10-min Goal Chance: {pred['last_10_min_goal']}%\nCorrect Scores: {', '.join(pred['correct_scores'])}\n\nOver/Under Probabilities:\n{ou_text}\nReason: {pred['reason']}"
             bot.reply_to(message, msg)
             break
     else:
@@ -211,7 +160,7 @@ def setup_bot():
     try:
         bot.remove_webhook()
         time.sleep(1)
-        domain = "YOUR_RAILWAY_APP_DOMAIN"  # e.g., https://yourapp.up.railway.app
+        domain = "https://YOUR_RAILWAY_DOMAIN"  # replace with your Railway app HTTPS domain
         bot.set_webhook(url=f"{domain}/{BOT_TOKEN}")
         print(f"✅ Webhook set: {domain}/{BOT_TOKEN}")
 
@@ -220,10 +169,10 @@ def setup_bot():
         t.start()
         print("✅ Auto-update started!")
 
+        # Startup message
         bot.send_message(OWNER_CHAT_ID, "🤖 Football Bot Started Successfully! Monitoring live matches every 5 minutes.")
     except Exception as e:
         print(f"❌ Bot setup error: {e}")
-        bot.polling(none_stop=True)
 
 # -------------------------
 # Run

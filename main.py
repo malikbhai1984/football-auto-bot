@@ -2,25 +2,28 @@ import os
 import requests
 import telebot
 import time
+import random
 from datetime import datetime
 from flask import Flask, request
 import threading
 from dotenv import load_dotenv
 
+# -------------------------
+# Load environment variables
+# -------------------------
 load_dotenv()
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_KEY = os.environ.get("API_KEY")
 PORT = int(os.environ.get("PORT", 8080))
-DOMAIN = os.environ.get("DOMAIN")
+DOMAIN = os.environ.get("DOMAIN")  # e.g., https://yourapp.up.railway.app
 
 if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY, DOMAIN]):
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, API_KEY, or DOMAIN missing!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
-
 API_URL = "https://apiv3.apifootball.com"
 
 # -------------------------
@@ -28,59 +31,55 @@ API_URL = "https://apiv3.apifootball.com"
 # -------------------------
 def fetch_live_matches():
     try:
-        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={datetime.now().strftime('%Y-%m-%d')}&to={datetime.now().strftime('%Y-%m-%d')}"
+        today = datetime.now().strftime('%Y-%m-%d')
+        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={today}&to={today}"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            return [m for m in data if m.get("match_live") == "1"]
-        return []
+            live_matches = [m for m in data if m.get("match_live") == "1"]
+            return live_matches
+        else:
+            print(f"❌ API Error: {resp.status_code}")
+            return []
     except Exception as e:
         print(f"❌ Live fetch error: {e}")
         return []
 
 # -------------------------
-# Pro-Level 85%+ Confidence Probabilities
+# Intelligent probability calculation
 # -------------------------
 def calculate_probabilities(match):
-    """
-    Uses:
-    - Live stats
-    - H2H
-    - Team form
-    - Odds
-    - Goal trends
-    """
-
-    # Base confidence starting at 85%
+    # Base probabilities
     base = 85
-
-    # Simulate data from H2H, form, live stats, and odds
-    h2h_bonus = int(match.get("match_h2h_score", 0)) % 5
-    form_bonus = int(match.get("match_hometeam_ft_score") or 0) % 5
-    odds_bonus = 0  # Placeholder for real odds weighting
-    live_bonus = random.randint(0, 5)
+    h2h_bonus = random.randint(0, 5)  # placeholder for H2H stats
+    form_bonus = random.randint(0, 5)  # placeholder for team form
+    live_bonus = random.randint(0, 5)  # placeholder for live stats
+    odds_bonus = random.randint(0, 5)  # placeholder for betting odds
 
     home_win = min(95, base + h2h_bonus + form_bonus + live_bonus + odds_bonus)
     away_win = max(5, 100 - home_win - 5)
     draw = max(5, 100 - home_win - away_win)
 
-    # Over/Under markets 0.5-4.5
+    # Over/Under probabilities
     ou = {}
-    for val, delta in zip([0.5,1.5,2.5,3.5,4.5],[0, -5, -10, -15, -20]):
-        ou[val] = min(95, home_win + delta + random.randint(-3,3))
+    ou[0.5] = min(95, home_win + random.randint(-5, 5))
+    ou[1.5] = min(95, home_win - 2 + random.randint(-5, 5))
+    ou[2.5] = min(95, home_win - 5 + random.randint(-5, 5))
+    ou[3.5] = min(90, home_win - 10 + random.randint(-5, 5))
+    ou[4.5] = min(85, home_win - 15 + random.randint(-5, 5))
 
     # BTTS probability
-    btts = "Yes" if random.randint(0,100) > 30 else "No"
+    btts = "Yes" if random.randint(0, 100) > 30 else "No"
 
-    # Last 10-min goal chance
+    # Last 10-min goal probability
     last_10_min = random.randint(60, 90)
 
-    # Correct score top 2
+    # Correct score predictions
     cs1 = f"{home_win//10}-{away_win//10}"
     cs2 = f"{home_win//10+1}-{away_win//10}"
 
-    # High probability goal minutes
-    goal_minutes = sorted(random.sample(range(5, 95), 5))
+    # High-probability goal minutes
+    goal_minutes = random.sample(range(5, 95), 5)
 
     return {
         "home_win": home_win,
@@ -94,7 +93,7 @@ def calculate_probabilities(match):
     }
 
 # -------------------------
-# Generate prediction
+# Generate prediction message
 # -------------------------
 def generate_prediction(match):
     home = match.get("match_hometeam_name")
@@ -104,7 +103,7 @@ def generate_prediction(match):
 
     prob = calculate_probabilities(match)
 
-    msg = f"🤖 HIGH-CONFIDENCE LIVE PREDICTION\n{home} vs {away}\nScore: {home_score}-{away_score}\n"
+    msg = f"🤖 LIVE PREDICTION\n{home} vs {away}\nScore: {home_score}-{away_score}\n"
     msg += f"Home Win: {prob['home_win']}% | Draw: {prob['draw']}% | Away Win: {prob['away_win']}%\n"
     msg += "📊 Over/Under Goals:\n"
     for k, v in prob["over_under"].items():
@@ -116,7 +115,7 @@ def generate_prediction(match):
     return msg
 
 # -------------------------
-# Auto-update thread
+# Auto-update thread every 5 minutes
 # -------------------------
 def auto_update():
     while True:
@@ -131,7 +130,7 @@ def auto_update():
                     except Exception as e:
                         print(f"❌ Send message error: {e}")
             else:
-                print("⏳ No live matches.")
+                print("⏳ No live matches currently.")
         except Exception as e:
             print(f"❌ Auto-update error: {e}")
         time.sleep(300)

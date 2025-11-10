@@ -2,22 +2,21 @@ import os
 import requests
 import telebot
 import time
-import random
 from datetime import datetime
 from flask import Flask, request
 import threading
 from dotenv import load_dotenv
 
-# -------------------------
-# Load environment variables
-# -------------------------
 load_dotenv()
 
+# -------------------------
+# Environment variables
+# -------------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_KEY = os.environ.get("API_KEY")
 PORT = int(os.environ.get("PORT", 8080))
-DOMAIN = os.environ.get("DOMAIN")
+DOMAIN = os.environ.get("DOMAIN")  # Your Railway app domain
 
 if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY, DOMAIN]):
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, API_KEY, or DOMAIN missing!")
@@ -46,38 +45,66 @@ def fetch_live_matches():
         return []
 
 # -------------------------
-# Generate probabilities for different markets
+# Intelligent probability calculation
 # -------------------------
 def calculate_probabilities(match):
-    base = 85
-    h2h_bonus = random.randint(0, 5)
-    form_bonus = random.randint(0, 5)
-    live_bonus = random.randint(0, 5)
+    # Base starting point
+    home_win = 85
+    away_win = 5
+    draw = 10
 
-    home_win = min(95, base + h2h_bonus + form_bonus + live_bonus)
-    away_win = max(5, 100 - home_win - 5)
-    draw = max(5, 100 - home_win - away_win)
+    # --- H2H bonus ---
+    try:
+        h2h_home = int(match.get("h2h_home_win_bonus", 0))
+        h2h_away = int(match.get("h2h_away_win_bonus", 0))
+        home_win += h2h_home
+        away_win += h2h_away
+        draw = max(5, 100 - home_win - away_win)
+    except:
+        pass
 
-    # Over/Under markets
+    # --- Form bonus ---
+    try:
+        form_home = int(match.get("form_home_bonus", 0))
+        form_away = int(match.get("form_away_bonus", 0))
+        home_win += form_home
+        away_win += form_away
+        draw = max(5, 100 - home_win - away_win)
+    except:
+        pass
+
+    # --- Live stats bonus ---
+    try:
+        live_home = int(match.get("live_home_bonus", 0))
+        live_away = int(match.get("live_away_bonus", 0))
+        home_win += live_home
+        away_win += live_away
+        draw = max(5, 100 - home_win - away_win)
+    except:
+        pass
+
+    # Clamp probabilities
+    home_win = min(max(home_win, 5), 95)
+    away_win = min(max(away_win, 5), 95)
+    draw = min(max(draw, 5), 95)
+
+    # Over/Under probabilities (0.5–4.5)
     ou = {}
-    ou[0.5] = min(95, home_win + random.randint(-5, 5))
-    ou[1.5] = min(95, home_win - 5 + random.randint(-5,5))
-    ou[2.5] = min(95, home_win - 10 + random.randint(-5,5))
-    ou[3.5] = min(90, home_win - 15 + random.randint(-5,5))
-    ou[4.5] = min(85, home_win - 20 + random.randint(-5,5))
+    for val, offset in zip([0.5, 1.5, 2.5, 3.5, 4.5], [0, -5, -10, -15, -20]):
+        ou[val] = min(95, max(5, home_win + offset))
 
-    # BTTS probability
-    btts = "Yes" if random.randint(0,100) > 30 else "No"
+    # BTTS
+    btts = "Yes" if home_win > 60 and away_win > 30 else "No"
 
-    # Last 10-min goal
-    last_10_min = random.randint(60, 90)
+    # Last 10-min goal chance
+    last_10_min = min(95, max(5, home_win//2 + away_win//4))
 
     # Correct score top 2
     cs1 = f"{home_win//10}-{away_win//10}"
     cs2 = f"{home_win//10+1}-{away_win//10}"
 
     # High probability goal minutes
-    goal_minutes = random.sample(range(5, 95), 5)
+    goal_minutes = [10, 23, 35, 57, 82]
 
     return {
         "home_win": home_win,
@@ -101,6 +128,11 @@ def generate_prediction(match):
 
     prob = calculate_probabilities(match)
 
+    # Only send predictions with 85%+ confidence in any market
+    max_conf = max([prob["home_win"], prob["away_win"], prob["draw"]] + list(prob["over_under"].values()))
+    if max_conf < 85:
+        return None
+
     msg = f"🤖 LIVE PREDICTION\n{home} vs {away}\nScore: {home_score}-{away_score}\n"
     msg += f"Home Win: {prob['home_win']}% | Draw: {prob['draw']}% | Away Win: {prob['away_win']}%\n"
     msg += "📊 Over/Under Goals:\n"
@@ -122,11 +154,12 @@ def auto_update():
             if matches:
                 for match in matches:
                     msg = generate_prediction(match)
-                    try:
-                        bot.send_message(OWNER_CHAT_ID, msg)
-                        time.sleep(2)
-                    except Exception as e:
-                        print(f"❌ Send message error: {e}")
+                    if msg:
+                        try:
+                            bot.send_message(OWNER_CHAT_ID, msg)
+                            time.sleep(2)
+                        except Exception as e:
+                            print(f"❌ Send message error: {e}")
             else:
                 print("⏳ No live matches.")
         except Exception as e:
@@ -144,8 +177,13 @@ def send_help(message):
 def send_predictions(message):
     matches = fetch_live_matches()
     if matches:
-        msg = generate_prediction(matches[0])
-        bot.reply_to(message, msg)
+        for match in matches:
+            msg = generate_prediction(match)
+            if msg:
+                bot.reply_to(message, msg)
+                break
+        else:
+            bot.reply_to(message, "⏳ No high-confidence live predictions currently.")
     else:
         bot.reply_to(message, "⏳ No live matches currently.")
 

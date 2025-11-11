@@ -30,10 +30,30 @@ app = Flask(__name__)
 # ✅ CORRECT API URL FOR API-FOOTBALL.COM
 API_URL = "https://apiv3.apifootball.com"
 
-print("🎯 Starting REAL-TIME PREDICTION UPDATER...")
+print("🎯 Starting SPECIFIC LEAGUE REAL-TIME PREDICTION UPDATER...")
 
 # -------------------------
-# SMART MATCH PROCESSING
+# SPECIFIC LEAGUES CONFIGURATION
+# -------------------------
+TARGET_LEAGUES = {
+    # Premier League
+    "152": "Premier League",
+    # La Liga
+    "302": "La Liga", 
+    # Serie A
+    "207": "Serie A",
+    # Bundesliga
+    "168": "Bundesliga",
+    # Ligue 1
+    "176": "Ligue 1",
+    # Champions League
+    "3": "Champions League",
+    # Europa League
+    "4": "Europa League"
+}
+
+# -------------------------
+# SMART MATCH PROCESSING WITH LEAGUE FILTER
 # -------------------------
 def safe_int(value, default=0):
     """Safely convert to integer"""
@@ -45,9 +65,9 @@ def safe_int(value, default=0):
         return default
 
 def fetch_live_matches_reliable():
-    """Reliably fetch live matches"""
+    """Reliably fetch live matches for SPECIFIC LEAGUES only"""
     try:
-        print("🔄 Fetching current live matches...")
+        print("🔄 Fetching current live matches for SPECIFIC LEAGUES...")
         
         today = datetime.now().strftime('%Y-%m-%d')
         url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={today}&to={today}"
@@ -58,9 +78,18 @@ def fetch_live_matches_reliable():
             data = response.json()
             
             if data and isinstance(data, list):
+                # First filter live matches
                 live_matches = [match for match in data if match.get("match_live") == "1"]
-                print(f"✅ Found {len(live_matches)} live matches")
-                return live_matches
+                
+                # Then filter for our target leagues
+                filtered_matches = []
+                for match in live_matches:
+                    league_id = match.get("league_id", "")
+                    if str(league_id) in TARGET_LEAGUES:
+                        filtered_matches.append(match)
+                
+                print(f"✅ Found {len(live_matches)} live matches, {len(filtered_matches)} in target leagues")
+                return filtered_matches
             else:
                 print("⏳ No live matches data")
                 return []
@@ -73,12 +102,13 @@ def fetch_live_matches_reliable():
         return []
 
 def process_match_smart(match):
-    """Smart match processing with fallbacks"""
+    """Smart match processing with league info"""
     try:
         # Essential data extraction
         match_id = match.get("match_id", f"match_{random.randint(1000,9999)}")
         home_team = match.get("match_hometeam_name", "Home Team")
         away_team = match.get("match_awayteam_name", "Away Team")
+        league_id = match.get("league_id", "")
         
         # Safe score conversion
         home_score = safe_int(match.get("match_hometeam_score"), 0)
@@ -115,6 +145,7 @@ def process_match_smart(match):
             "match_hometeam_score": str(home_score),
             "match_awayteam_score": str(away_score),
             "league_name": league,
+            "league_id": league_id,
             "league_country": country,
             "match_time": time_display,
             "match_live": "1" if is_live else "0",
@@ -131,12 +162,12 @@ def process_match_smart(match):
         return None
 
 def get_current_matches():
-    """Get current matches with reliable processing"""
+    """Get current matches from SPECIFIC LEAGUES only"""
     try:
         raw_matches = fetch_live_matches_reliable()
         
         if not raw_matches:
-            print("⏳ No live matches available")
+            print("⏳ No live matches in target leagues available")
             return []
         
         processed_matches = []
@@ -145,7 +176,7 @@ def get_current_matches():
             if processed_match:
                 processed_matches.append(processed_match)
         
-        print(f"✅ Successfully processed {len(processed_matches)} matches")
+        print(f"✅ Successfully processed {len(processed_matches)} matches from target leagues")
         return processed_matches
             
     except Exception as e:
@@ -168,8 +199,10 @@ class RealTimePredictor:
             away_score = safe_int(match.get("match_awayteam_score"), 0)
             minute = safe_int(match.get("current_minute"), 0)
             status = match.get("match_status", "")
+            league_id = match.get("league_id", "")
+            league_name = TARGET_LEAGUES.get(str(league_id), match.get("league_name", ""))
             
-            print(f"  🔄 FRESH ANALYSIS: {home_team} {home_score}-{away_score} {away_team} ({minute}')")
+            print(f"  🔄 FRESH ANALYSIS [{league_name}]: {home_team} {home_score}-{away_score} {away_team} ({minute}')")
             
             # Generate fresh analysis based on current situation
             fresh_predictions = self.analyze_current_situation(home_score, away_score, minute, status)
@@ -182,7 +215,8 @@ class RealTimePredictor:
                     "current_score": f"{home_score}-{away_score}",
                     "current_minute": minute,
                     "match_status": status,
-                    "league": match.get("league_name", "")
+                    "league": league_name,
+                    "league_id": league_id
                 },
                 "fresh_predictions": fresh_predictions,
                 "match_insights": self.generate_match_insights(home_score, away_score, minute)
@@ -549,67 +583,83 @@ prediction_manager = PredictionManager()
 # REAL-TIME AUTO UPDATER
 # -------------------------
 def realtime_auto_updater():
-    """Auto-updater that provides FRESH analysis every 5 minutes"""
+    """Auto-updater that provides FRESH analysis every 5 minutes for SPECIFIC LEAGUES"""
     while True:
         try:
             current_time = datetime.now().strftime("%H:%M:%S")
-            print(f"\n🔄 [{current_time}] Starting FRESH analysis cycle...")
+            print(f"\n🔄 [{current_time}] Starting FRESH analysis cycle for SPECIFIC LEAGUES...")
             
-            # Get current matches
+            # Get current matches from specific leagues
             matches = get_current_matches()
             
             if not matches:
-                print("⏳ No live matches for analysis")
+                print("⏳ No live matches in target leagues for analysis")
                 time.sleep(300)
                 continue
             
             fresh_analyses = 0
             predictions_sent = 0
             
+            # Group matches by league for better organization
+            matches_by_league = {}
             for match in matches:
-                try:
-                    match_id = match.get("match_id")
-                    home = match.get("match_hometeam_name")
-                    away = match.get("match_awayteam_name")
-                    score = f"{match.get('match_hometeam_score')}-{match.get('match_awayteam_score')}"
-                    minute = match.get("current_minute")
-                    
-                    print(f"  🔄 Fresh analysis: {home} {score} {away} ({minute}')")
-                    
-                    # Check if we should analyze this match
-                    if prediction_manager.should_analyze_match(match_id):
-                        # Generate FRESH predictions based on current situation
-                        fresh_analysis = realtime_predictor.generate_fresh_predictions(match)
+                league_id = match.get("league_id", "unknown")
+                if league_id not in matches_by_league:
+                    matches_by_league[league_id] = []
+                matches_by_league[league_id].append(match)
+            
+            for league_id, league_matches in matches_by_league.items():
+                league_name = TARGET_LEAGUES.get(str(league_id), f"League {league_id}")
+                print(f"  📊 Processing {len(league_matches)} matches from {league_name}")
+                
+                for match in league_matches:
+                    try:
+                        match_id = match.get("match_id")
+                        home = match.get("match_hometeam_name")
+                        away = match.get("match_awayteam_name")
+                        score = f"{match.get('match_hometeam_score')}-{match.get('match_awayteam_score')}"
+                        minute = match.get("current_minute")
                         
-                        if fresh_analysis and fresh_analysis["fresh_predictions"]:
-                            fresh_analyses += 1
-                            
-                            # Generate and send message
-                            message = generate_fresh_prediction_message(fresh_analysis)
-                            
-                            if message:
-                                try:
-                                    bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
-                                    predictions_sent += 1
-                                    print(f"    ✅ FRESH ANALYSIS SENT: {home} vs {away}")
-                                    time.sleep(2)  # Rate limiting
-                                except Exception as e:
-                                    print(f"    ❌ Send failed: {e}")
-                    else:
-                        print(f"    ⏳ Analysis not due yet")
+                        print(f"    🔄 Fresh analysis: {home} {score} {away} ({minute}')")
                         
-                except Exception as e:
-                    print(f"    ❌ Match analysis failed: {e}")
-                    continue
+                        # Check if we should analyze this match
+                        if prediction_manager.should_analyze_match(match_id):
+                            # Generate FRESH predictions based on current situation
+                            fresh_analysis = realtime_predictor.generate_fresh_predictions(match)
+                            
+                            if fresh_analysis and fresh_analysis["fresh_predictions"]:
+                                fresh_analyses += 1
+                                
+                                # Generate and send message
+                                message = generate_fresh_prediction_message(fresh_analysis)
+                                
+                                if message:
+                                    try:
+                                        bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
+                                        predictions_sent += 1
+                                        print(f"      ✅ FRESH ANALYSIS SENT: {home} vs {away}")
+                                        time.sleep(2)  # Rate limiting
+                                    except Exception as e:
+                                        print(f"      ❌ Send failed: {e}")
+                        else:
+                            print(f"    ⏳ Analysis not due yet")
+                            
+                    except Exception as e:
+                        print(f"    ❌ Match analysis failed: {e}")
+                        continue
             
             # Send cycle summary
             summary_msg = f"""
-📊 **FRESH ANALYSIS CYCLE COMPLETE**
+📊 **FRESH ANALYSIS CYCLE COMPLETE - SPECIFIC LEAGUES**
 
 ⏰ Cycle Time: {current_time}
+🎯 Target Leagues: {len(TARGET_LEAGUES)} top European leagues
 🔍 Matches Processed: {len(matches)}
 🔄 Fresh Analyses: {fresh_analyses}
 📤 Predictions Sent: {predictions_sent}
+
+**Targeted Leagues:**
+{chr(10).join([f'• {name}' for name in TARGET_LEAGUES.values()])}
 
 {'✅ Fresh predictions delivered!' if predictions_sent > 0 else '⏳ No high-confidence opportunities'}
 🔄 Next analysis cycle in 5 minutes...
@@ -631,8 +681,11 @@ def realtime_auto_updater():
 # -------------------------
 @bot.message_handler(commands=['start', 'help'])
 def send_help(message):
-    help_text = """
-🤖 **REAL-TIME PREDICTION UPDATER**
+    help_text = f"""
+🤖 **SPECIFIC LEAGUE REAL-TIME PREDICTION UPDATER**
+
+🎯 **FOCUSED ON 7 TOP EUROPEAN LEAGUES:**
+{chr(10).join([f'• {name}' for name in TARGET_LEAGUES.values()])}
 
 🔄 **FRESH ANALYSIS EVERY 5 MINUTES!**
 • Completely new predictions based on current match situation
@@ -649,29 +702,44 @@ def send_help(message):
 
 ⚡ **Commands:**
 • `/analyze` - Manual fresh analysis
-• `/matches` - Current live matches
+• `/matches` - Current live matches in target leagues
+• `/leagues` - Show target leagues
 • `/status` - System status
 
 🎯 **Auto-analyzes every 5 minutes with fresh data!**
 """
-    bot.reply_to(message, help_text, parse_mode='Markdown')
+    bot.reply_to(message, help_text, parse_mode='MarkDown')
+
+@bot.message_handler(commands=['leagues'])
+def show_leagues(message):
+    """Show targeted leagues"""
+    leagues_text = f"""
+🎯 **TARGETED LEAGUES FOR ANALYSIS:**
+
+{chr(10).join([f'• {name} (ID: {id})' for id, name in TARGET_LEAGUES.items()])}
+
+📊 Total: {len(TARGET_LEAGUES)} leagues
+🔄 Only matches from these leagues are analyzed
+"""
+    bot.reply_to(message, leagues_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['analyze'])
 def manual_analysis(message):
-    """Manual fresh analysis"""
+    """Manual fresh analysis for specific leagues"""
     try:
-        bot.reply_to(message, "🔍 Starting FRESH analysis of current matches...")
+        bot.reply_to(message, "🔍 Starting FRESH analysis of current matches in TARGET LEAGUES...")
         
         matches = get_current_matches()
         
         if not matches:
-            bot.reply_to(message, "⏳ No live matches currently available.")
+            bot.reply_to(message, "⏳ No live matches currently available in target leagues.")
             return
         
         analysis_count = 0
-        response_message = "🔄 **FRESH ANALYSIS RESULTS**\n\n"
+        response_message = f"🔄 **FRESH ANALYSIS RESULTS - TARGET LEAGUES**\n\n"
+        response_message += f"🔍 Found {len(matches)} live matches\n\n"
         
-        for match in matches[:3]:  # Analyze first 3 matches
+        for match in matches[:4]:  # Analyze first 4 matches
             fresh_analysis = realtime_predictor.generate_fresh_predictions(match)
             
             if fresh_analysis and fresh_analysis["fresh_predictions"]:
@@ -679,6 +747,7 @@ def manual_analysis(message):
                 match_info = fresh_analysis["match_info"]
                 
                 response_message += f"⚽ **{match_info['home_team']} vs {match_info['away_team']}**\n"
+                response_message += f"🏆 {match_info['league']}\n"
                 response_message += f"📊 {match_info['current_score']} | ⏱️ {match_info['current_minute']}'\n"
                 
                 # Show top prediction
@@ -688,7 +757,7 @@ def manual_analysis(message):
         if analysis_count == 0:
             response_message += "⏳ No fresh analysis opportunities found.\n"
         
-        response_message += f"🔍 Analyzed {len(matches)} live matches"
+        response_message += f"🎯 Focused on {len(TARGET_LEAGUES)} top leagues"
         
         bot.reply_to(message, response_message, parse_mode='Markdown')
         
@@ -697,26 +766,40 @@ def manual_analysis(message):
 
 @bot.message_handler(commands=['matches'])
 def list_current_matches(message):
-    """List current live matches"""
+    """List current live matches from specific leagues"""
     try:
         matches = get_current_matches()
         
         if not matches:
-            bot.reply_to(message, "⏳ No live matches currently.")
+            bot.reply_to(message, "⏳ No live matches currently in target leagues.")
             return
         
-        matches_msg = f"🔴 **CURRENT LIVE MATCHES**\n\n"
-        matches_msg += f"Total: {len(matches)} matches\n\n"
+        # Group by league
+        matches_by_league = {}
+        for match in matches:
+            league_id = match.get("league_id", "unknown")
+            league_name = TARGET_LEAGUES.get(str(league_id), f"League {league_id}")
+            if league_name not in matches_by_league:
+                matches_by_league[league_name] = []
+            matches_by_league[league_name].append(match)
         
-        for i, match in enumerate(matches[:6], 1):
-            home = match.get('match_hometeam_name', 'Unknown')
-            away = match.get('match_awayteam_name', 'Unknown')
-            score = f"{match.get('match_hometeam_score', '0')}-{match.get('match_awayteam_score', '0')}"
-            league = match.get('league_name', 'Unknown')
-            time_display = match.get('match_time', 'NS')
+        matches_msg = f"🔴 **CURRENT LIVE MATCHES - TARGET LEAGUES**\n\n"
+        matches_msg += f"Total: {len(matches)} matches across {len(matches_by_league)} leagues\n\n"
+        
+        for league_name, league_matches in matches_by_league.items():
+            matches_msg += f"**{league_name}**\n"
             
-            matches_msg += f"{i}. **{home}** {score} **{away}**\n"
-            matches_msg += f"   🏆 {league} | ⏱️ {time_display}\n\n"
+            for i, match in enumerate(league_matches[:3], 1):
+                home = match.get('match_hometeam_name', 'Unknown')
+                away = match.get('match_awayteam_name', 'Unknown')
+                score = f"{match.get('match_hometeam_score', '0')}-{match.get('match_awayteam_score', '0')}"
+                time_display = match.get('match_time', 'NS')
+                
+                matches_msg += f"  {i}. **{home}** {score} **{away}** | ⏱️ {time_display}\n"
+            
+            if len(league_matches) > 3:
+                matches_msg += f"  ... and {len(league_matches) - 3} more matches\n"
+            matches_msg += "\n"
         
         matches_msg += "Use `/analyze` for fresh predictions!"
         bot.reply_to(message, matches_msg, parse_mode='Markdown')
@@ -730,15 +813,20 @@ def send_status(message):
         matches = get_current_matches()
         
         status_msg = f"""
-🤖 **REAL-TIME PREDICTION UPDATER**
+🤖 **SPECIFIC LEAGUE REAL-TIME PREDICTION UPDATER**
 
 ✅ System Status: ACTIVE
 🕐 Last Cycle: {datetime.now().strftime('%H:%M:%S')}
 ⏰ Analysis Interval: 5 minutes
 🎯 Confidence Threshold: 80%+
+🎯 Target Leagues: {len(TARGET_LEAGUES)}
 🔴 Live Matches: {len(matches)}
 
+**Targeted Leagues:**
+{chr(10).join([f'• {name}' for name in TARGET_LEAGUES.values()])}
+
 **Features:**
+• League-Specific Focus: ✅
 • Fresh Analysis: ✅
 • Real-time Updates: ✅
 • Current Situation: ✅
@@ -755,7 +843,7 @@ def send_status(message):
 # -------------------------
 @app.route('/')
 def home():
-    return "🤖 Real-Time Prediction Updater - Fresh Analysis Every 5 Minutes"
+    return "🤖 Specific League Real-Time Prediction Updater - Focused on 7 Top European Leagues"
 
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
@@ -777,10 +865,13 @@ def setup_bot():
         # Start real-time auto updater
         t = threading.Thread(target=realtime_auto_updater, daemon=True)
         t.start()
-        print("✅ Real-time auto updater started!")
+        print("✅ Specific League Real-time auto updater started!")
 
         startup_msg = f"""
-🤖 **REAL-TIME PREDICTION UPDATER STARTED!**
+🤖 **SPECIFIC LEAGUE REAL-TIME PREDICTION UPDATER STARTED!**
+
+🎯 **FOCUSED ON {len(TARGET_LEAGUES)} TOP EUROPEAN LEAGUES:**
+{chr(10).join([f'• {name}' for name in TARGET_LEAGUES.values()])}
 
 🔄 **FRESH ANALYSIS EVERY 5 MINUTES**
 • Completely new predictions each cycle
@@ -788,7 +879,7 @@ def setup_bot():
 • Real-time score analysis
 • Fresh insights and trends
 
-✅ **System actively analyzing matches!**
+✅ **System actively analyzing target league matches!**
 ⏰ **First analysis cycle in 1 minute...**
 
 🎯 **Ready to deliver fresh predictions!**
@@ -800,6 +891,6 @@ def setup_bot():
         bot.polling(none_stop=True)
 
 if __name__ == '__main__':
-    print("🚀 Starting Real-Time Prediction Updater...")
+    print("🚀 Starting Specific League Real-Time Prediction Updater...")
     setup_bot()
     app.run(host='0.0.0.0', port=PORT)

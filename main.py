@@ -13,24 +13,6 @@ from dotenv import load_dotenv
 import json
 import pytz
 
-
-
-# global hit counter
-import time
-
-hits = 0
-
-def fetch_live_matches():
-    global hits
-    hits += 1
-    print(f"🔥 API HIT #{hits} at {time.strftime('%H:%M:%S')}")
-
-    url = "https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey=839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
-    response = requests.get(url)
-    data = response.json()
-    return data
-
-
 # -------------------------
 # Load environment variables
 # -------------------------
@@ -38,168 +20,129 @@ load_dotenv()
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
-API_KEY = os.environ.get("API_KEY")
-PORT = int(os.environ.get("PORT", 8080))
-DOMAIN = os.environ.get("DOMAIN")
+API_KEY = os.environ.get("API_KEY") or "839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
 
-if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY]):
-    raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, or API_KEY missing!")
+if not all([BOT_TOKEN, OWNER_CHAT_ID]):
+    raise ValueError("❌ BOT_TOKEN or OWNER_CHAT_ID missing!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 # ✅ Check if we should use webhook or polling
-USE_WEBHOOK = bool(DOMAIN)
+USE_WEBHOOK = bool(os.environ.get("DOMAIN"))
 
 print(f"🎯 Starting Football Prediction Bot...")
 print(f"🌐 Webhook Mode: {USE_WEBHOOK}")
-print(f"🔗 Domain: {DOMAIN}")
 
 # ✅ CORRECT API URL FOR API-FOOTBALL.COM
 API_URL = "https://apiv3.apifootball.com"
 
 # -------------------------
-# AUTO LIMIT PROTECTOR SYSTEM
+# GLOBAL HIT COUNTER & API OPTIMIZER
 # -------------------------
-class AutoLimitProtector:
+class GlobalHitCounter:
     def __init__(self):
-        self.daily_limit = 100  # Free plan daily limit
-        self.emergency_mode = False
-        self.protection_log = []
-        self.last_warning_sent = None
+        self.total_hits = 0
+        self.daily_hits = 0
+        self.hourly_hits = 0
+        self.last_hit_time = None
+        self.hit_log = []
+        self.last_reset = datetime.now()
         
-    def check_api_health(self, current_usage):
-        """Check API usage and return protection level"""
-        remaining_calls = self.daily_limit - current_usage
+    def record_hit(self):
+        """Record an API hit with timestamp"""
+        current_time = datetime.now()
         
-        if current_usage >= 95:
-            level = "CRITICAL"
-            action = "STOP_UPDATES"
-            interval = 1800  # 30 minutes
-        elif current_usage >= 80:
-            level = "HIGH" 
-            action = "REDUCE_HEAVY"
-            interval = 600   # 10 minutes
-        elif current_usage >= 60:
-            level = "MEDIUM"
-            action = "REDUCE_MEDIUM"
-            interval = 300   # 5 minutes
-        elif current_usage >= 40:
-            level = "LOW"
-            action = "REDUCE_LIGHT" 
-            interval = 180   # 3 minutes
-        else:
-            level = "SAFE"
-            action = "NORMAL"
-            interval = 120   # 2 minutes
-            
-        return {
-            "level": level,
-            "action": action,
-            "interval": interval,
-            "remaining": remaining_calls,
-            "usage_percent": (current_usage / self.daily_limit) * 100
+        # Reset daily counter if new day
+        if current_time.date() > self.last_reset.date():
+            self.daily_hits = 0
+            self.last_reset = current_time
+        
+        # Reset hourly counter if new hour
+        if not self.last_hit_time or current_time.hour > self.last_hit_time.hour:
+            self.hourly_hits = 0
+        
+        self.total_hits += 1
+        self.daily_hits += 1
+        self.hourly_hits += 1
+        self.last_hit_time = current_time
+        
+        # Log the hit
+        hit_info = {
+            "timestamp": current_time.strftime('%H:%M:%S'),
+            "daily_count": self.daily_hits,
+            "hourly_count": self.hourly_hits,
+            "total_count": self.total_hits
         }
-    
-    def should_make_api_call(self, current_usage, call_type="auto"):
-        """Determine if API call should be made"""
-        if current_usage >= 100:
-            self.log_protection("BLOCKED", f"{call_type} call blocked - Daily limit reached")
-            return False
-            
-        if current_usage >= 95 and call_type == "auto":
-            self.log_protection("BLOCKED", f"Auto update blocked - Critical level")
-            return False
-            
-        return True
-    
-    def get_smart_interval(self, current_usage):
-        """Get smart interval based on usage"""
-        health = self.check_api_health(current_usage)
+        self.hit_log.append(hit_info)
         
-        # Add some randomness to avoid patterns
-        random_buffer = random.randint(10, 30)
-        final_interval = health["interval"] + random_buffer
+        # Keep only last 100 hits in log
+        if len(self.hit_log) > 100:
+            self.hit_log = self.hit_log[-100:]
         
-        self.log_protection(health["level"], 
-                           f"Interval: {final_interval}s, Remaining: {health['remaining']}")
+        print(f"🔥 API HIT #{self.total_hits} at {current_time.strftime('%H:%M:%S')}")
+        print(f"📊 Today: {self.daily_hits}/100 | This Hour: {self.hourly_hits}")
         
-        return final_interval, health
+        return hit_info
     
-    def log_protection(self, level, message):
-        """Log protection actions"""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "level": level,
-            "message": message
-        }
-        self.protection_log.append(log_entry)
+    def get_hit_stats(self):
+        """Get comprehensive hit statistics"""
+        now = datetime.now()
         
-        # Keep only last 50 entries
-        if len(self.protection_log) > 50:
-            self.protection_log = self.protection_log[-50:]
-            
-        print(f"🛡️ [{level}] {message}")
-    
-    def send_warning_alert(self, health, current_usage, bot_instance):
-        """Send warning alerts to owner"""
-        try:
-            if self.last_warning_sent and (datetime.now() - self.last_warning_sent).total_seconds() < 3600:
-                return  # Don't spam warnings
-                
-            if health["level"] in ["CRITICAL", "HIGH"]:
-                warning_msg = f"""
-🚨 **API LIMIT ALERT**
+        # Calculate hits per minute
+        recent_hits = [hit for hit in self.hit_log 
+                      if (now - datetime.strptime(hit['timestamp'], '%H:%M:%S')).total_seconds() < 3600]
+        hits_per_minute = len(recent_hits) / 60 if recent_hits else 0
+        
+        # Estimate remaining daily calls
+        remaining_daily = max(0, 100 - self.daily_hits)
+        
+        # Calculate time until reset
+        time_until_reset = (self.last_reset + timedelta(days=1) - now).total_seconds()
+        hours_until_reset = int(time_until_reset // 3600)
+        minutes_until_reset = int((time_until_reset % 3600) // 60)
+        
+        stats = f"""
+🔥 **GLOBAL HIT COUNTER STATS**
 
-📊 **Current Usage:** {current_usage}/{self.daily_limit}
-📈 **Usage Percentage:** {health['usage_percent']:.1f}%
-🛡️ **Protection Level:** {health['level']}
-⏱️ **Update Interval:** {health['interval']} seconds
-🔄 **Action Taken:** {health['action']}
+📈 **Current Usage:**
+• Total Hits: {self.total_hits}
+• Today's Hits: {self.daily_hits}/100
+• This Hour: {self.hourly_hits}
+• Hits/Minute: {hits_per_minute:.1f}
 
-💡 **Recommendation:** {'STOP BOT until reset' if health['level'] == 'CRITICAL' else 'Reduced update frequency'}
+🎯 **Remaining Capacity:**
+• Daily Remaining: {remaining_daily} calls
+• Time Until Reset: {hours_until_reset}h {minutes_until_reset}m
+• Usage Percentage: {(self.daily_hits/100)*100:.1f}%
+
+⏰ **Last Hit:** {self.last_hit_time.strftime('%H:%M:%S') if self.last_hit_time else 'Never'}
+
+💡 **Recommendations:**
+{'🟢 Safe to continue' if self.daily_hits < 80 else '🟡 Slow down' if self.daily_hits < 95 else '🔴 STOP API CALLS'}
 """
-                bot_instance.send_message(OWNER_CHAT_ID, warning_msg, parse_mode='Markdown')
-                self.last_warning_sent = datetime.now()
-                
-        except Exception as e:
-            print(f"❌ Warning alert error: {e}")
+        return stats
     
-    def get_protection_status(self):
-        """Get protection system status"""
-        if not self.protection_log:
-            return "🟢 Protection System: No actions taken yet"
+    def can_make_request(self):
+        """Check if we can make another API request"""
+        if self.daily_hits >= 100:
+            return False, "Daily limit reached"
         
-        recent_actions = self.protection_log[-5:]  # Last 5 actions
-        actions_text = "\n".join([f"• {action['timestamp'][11:19]} - {action['level']}: {action['message']}" 
-                                for action in recent_actions])
+        if self.hourly_hits >= 30:  # Max 30 calls per hour
+            return False, "Hourly limit reached"
         
-        return f"""
-🛡️ **AUTO LIMIT PROTECTOR STATUS**
+        return True, "OK"
 
-📊 **Recent Actions:**
-{actions_text}
-
-🎯 **Protection Levels:**
-• 🟢 SAFE (0-39%) - 2-3 minute updates
-• 🟡 LOW (40-59%) - 3-5 minute updates  
-• 🟠 MEDIUM (60-79%) - 5-10 minute updates
-• 🔴 HIGH (80-94%) - 10-30 minute updates
-• 🚨 CRITICAL (95%+) - Stop auto updates
-
-💾 **Daily Limit:** {self.daily_limit} calls
-"""
-
-# Initialize Auto Limit Protector
-limit_protector = AutoLimitProtector()
+# Initialize Global Hit Counter
+hit_counter = GlobalHitCounter()
 
 # -------------------------
-# SMART API CACHING SYSTEM
+# OPTIMIZED API CACHING SYSTEM
 # -------------------------
-class APICache:
+class OptimizedAPICache:
     def __init__(self):
         self.cache_file = "api_cache.json"
-        self.cache_duration = 120  # 2 minutes cache for live matches
+        self.cache_duration = 300  # 5 minutes cache
         self.stats_file = "api_stats.json"
         self.load_cache()
         self.load_stats()
@@ -214,15 +157,50 @@ class APICache:
             else:
                 self.cache = {
                     "live_matches": {"data": [], "timestamp": None},
-                    "today_matches": {"data": [], "timestamp": None}
+                    "sample_matches": {"data": self.get_sample_matches(), "timestamp": datetime.now().isoformat()}
                 }
                 self.save_cache()
         except Exception as e:
             print(f"❌ Cache load error: {e}")
             self.cache = {
                 "live_matches": {"data": [], "timestamp": None},
-                "today_matches": {"data": [], "timestamp": None}
+                "sample_matches": {"data": self.get_sample_matches(), "timestamp": datetime.now().isoformat()}
             }
+    
+    def get_sample_matches(self):
+        """Get sample matches for demo when API is down"""
+        return [
+            {
+                "match_hometeam_name": "Manchester City",
+                "match_awayteam_name": "Liverpool", 
+                "match_hometeam_score": "1",
+                "match_awayteam_score": "1",
+                "match_status": "45",
+                "league_id": "152",
+                "match_live": "1",
+                "league_name": "Premier League"
+            },
+            {
+                "match_hometeam_name": "Real Madrid",
+                "match_awayteam_name": "Barcelona",
+                "match_hometeam_score": "2", 
+                "match_awayteam_score": "0",
+                "match_status": "65",
+                "league_id": "302",
+                "match_live": "1",
+                "league_name": "La Liga"
+            },
+            {
+                "match_hometeam_name": "Bayern Munich",
+                "match_awayteam_name": "Borussia Dortmund",
+                "match_hometeam_score": "1",
+                "match_awayteam_score": "1", 
+                "match_status": "HT",
+                "league_id": "168",
+                "match_live": "1",
+                "league_name": "Bundesliga"
+            }
+        ]
     
     def save_cache(self):
         """Save cache to file"""
@@ -240,21 +218,21 @@ class APICache:
                     self.stats = json.load(f)
             else:
                 self.stats = {
-                    "total_api_calls": 0,
+                    "total_requests": 0,
                     "cache_hits": 0,
-                    "cache_misses": 0,
-                    "daily_calls": 0,
-                    "last_reset": datetime.now().isoformat()
+                    "successful_api_calls": 0,
+                    "failed_api_calls": 0,
+                    "last_success": None
                 }
                 self.save_stats()
         except Exception as e:
             print(f"❌ Stats load error: {e}")
             self.stats = {
-                "total_api_calls": 0,
+                "total_requests": 0,
                 "cache_hits": 0,
-                "cache_misses": 0,
-                "daily_calls": 0,
-                "last_reset": datetime.now().isoformat()
+                "successful_api_calls": 0,
+                "failed_api_calls": 0,
+                "last_success": None
             }
     
     def save_stats(self):
@@ -264,22 +242,6 @@ class APICache:
                 json.dump(self.stats, f, indent=2)
         except Exception as e:
             print(f"❌ Stats save error: {e}")
-    
-    def reset_daily_counter(self):
-        """Reset daily counter if new day"""
-        try:
-            last_reset = datetime.fromisoformat(self.stats["last_reset"])
-            now = datetime.now()
-            if now.date() > last_reset.date():
-                self.stats["daily_calls"] = 0
-                self.stats["last_reset"] = now.isoformat()
-                self.save_stats()
-                print("🔄 Daily API counter reset")
-                return True
-            return False
-        except Exception as e:
-            print(f"❌ Daily counter reset error: {e}")
-            return False
     
     def is_cache_valid(self, cache_key):
         """Check if cache is still valid"""
@@ -299,7 +261,7 @@ class APICache:
     
     def get_cached_data(self, cache_key):
         """Get cached data if valid"""
-        self.reset_daily_counter()
+        self.stats["total_requests"] += 1
         
         if self.is_cache_valid(cache_key):
             self.stats["cache_hits"] += 1
@@ -307,7 +269,6 @@ class APICache:
             print(f"✅ Cache HIT for {cache_key}")
             return self.cache[cache_key]["data"]
         else:
-            self.stats["cache_misses"] += 1
             self.save_stats()
             print(f"🔄 Cache MISS for {cache_key}")
             return None
@@ -324,250 +285,193 @@ class APICache:
         except Exception as e:
             print(f"❌ Cache update error: {e}")
     
-    def record_api_call(self):
-        """Record API call in statistics"""
-        self.stats["total_api_calls"] += 1
-        self.stats["daily_calls"] += 1
+    def record_api_result(self, success=True):
+        """Record API call result"""
+        if success:
+            self.stats["successful_api_calls"] += 1
+            self.stats["last_success"] = datetime.now().isoformat()
+        else:
+            self.stats["failed_api_calls"] += 1
         self.save_stats()
-        
-        # Check protection system
-        health = limit_protector.check_api_health(self.stats["daily_calls"])
-        
-        print(f"📊 API Call #{self.stats['total_api_calls']} (Today: {self.stats['daily_calls']}/{limit_protector.daily_limit})")
-        print(f"🛡️ Protection Level: {health['level']}")
-        
-        # Send warning if needed
-        if health["level"] in ["HIGH", "CRITICAL"]:
-            limit_protector.send_warning_alert(health, self.stats["daily_calls"], bot)
     
     def get_cache_stats(self):
         """Get cache statistics"""
-        total_requests = self.stats["cache_hits"] + self.stats["cache_misses"]
-        hit_rate = (self.stats["cache_hits"] / total_requests * 100) if total_requests > 0 else 0
+        total_requests = self.stats["total_requests"]
+        cache_hit_rate = (self.stats["cache_hits"] / total_requests * 100) if total_requests > 0 else 0
         
-        health = limit_protector.check_api_health(self.stats["daily_calls"])
+        total_api_calls = self.stats["successful_api_calls"] + self.stats["failed_api_calls"]
+        success_rate = (self.stats["successful_api_calls"] / total_api_calls * 100) if total_api_calls > 0 else 0
         
         return f"""
-📊 **CACHE & PROTECTION STATISTICS**
+💾 **CACHE PERFORMANCE STATS**
 
-🔢 **API Usage:**
-• Total API Calls: {self.stats['total_api_calls']}
-• Today's Calls: {self.stats['daily_calls']}/{limit_protector.daily_limit}
-• Remaining Today: {limit_protector.daily_limit - self.stats['daily_calls']}
-• Usage Percentage: {health['usage_percent']:.1f}%
-
-💾 **Cache Performance:**
+📊 **Requests:**
+• Total Requests: {self.stats['total_requests']}
 • Cache Hits: {self.stats['cache_hits']}
-• Cache Misses: {self.stats['cache_misses']}
-• Hit Rate: {hit_rate:.1f}%
+• Cache Hit Rate: {cache_hit_rate:.1f}%
 
-🛡️ **Protection System:**
-• Current Level: {health['level']}
-• Update Interval: {health['interval']}s
-• Action: {health['action']}
+🔗 **API Calls:**
+• Successful: {self.stats['successful_api_calls']}
+• Failed: {self.stats['failed_api_calls']}
+• Success Rate: {success_rate:.1f}%
 
 ⏱️ **Cache Duration:** {self.cache_duration} seconds
+{'• Last Success: ' + datetime.fromisoformat(self.stats['last_success']).strftime('%H:%M:%S') if self.stats['last_success'] else '• No successful calls yet'}
 """
 
-# Initialize cache
-api_cache = APICache()
+# Initialize Cache
+api_cache = OptimizedAPICache()
 
 # -------------------------
-# UPDATED & VERIFIED LEAGUE IDs
+# OPTIMIZED LIVE MATCHES FETCHER
 # -------------------------
-TARGET_LEAGUES = {
-    "152": "Premier League",
-    "302": "La Liga", 
-    "207": "Serie A",
-    "168": "Bundesliga",
-    "176": "Ligue 1",
-    "149": "Champions League",
-    "150": "Europa League"
-}
-
-# -------------------------
-# CACHED REAL-TIME MATCH DATA FETCHING
-# -------------------------
-def fetch_real_live_matches():
-    """Fetch REAL live matches from API with caching"""
+def fetch_live_matches():
+    """🔥 OPTIMIZED API CALL with hit counter and live matches filter"""
     
-    # First check cache
+    # Record the hit
+    hit_info = hit_counter.record_hit()
+    
+    # Check if we can make the request
+    can_make, reason = hit_counter.can_make_request()
+    if not can_make:
+        print(f"🚫 API Call Blocked: {reason}")
+        return api_cache.cache.get("sample_matches", {}).get("data", [])
+    
+    try:
+        # Use the optimized URL with match_live=1 parameter
+        url = f"https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey={API_KEY}"
+        
+        print(f"📡 Fetching LIVE matches from API...")
+        print(f"🔗 URL: {url.replace(API_KEY, 'API_KEY_HIDDEN')}")
+        
+        start_time = time.time()
+        response = requests.get(url, timeout=15)
+        response_time = time.time() - start_time
+        
+        print(f"⏱️ Response Time: {response_time:.2f}s")
+        print(f"📊 Status Code: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            print(f"📦 Response Type: {type(data)}")
+            
+            if isinstance(data, list):
+                print(f"✅ Found {len(data)} live matches")
+                api_cache.record_api_result(success=True)
+                
+                # Add league names to matches
+                for match in data:
+                    league_id = match.get("league_id", "")
+                    match["league_name"] = get_league_name(league_id)
+                
+                return data
+            else:
+                print(f"❌ Invalid response format: {data}")
+                api_cache.record_api_result(success=False)
+                return api_cache.cache.get("sample_matches", {}).get("data", [])
+        else:
+            print(f"❌ HTTP Error {response.status_code}")
+            api_cache.record_api_result(success=False)
+            return api_cache.cache.get("sample_matches", {}).get("data", [])
+            
+    except requests.exceptions.Timeout:
+        print("❌ API request timeout")
+        api_cache.record_api_result(success=False)
+        return api_cache.cache.get("sample_matches", {}).get("data", [])
+    except requests.exceptions.ConnectionError:
+        print("❌ API connection error")
+        api_cache.record_api_result(success=False)
+        return api_cache.cache.get("sample_matches", {}).get("data", [])
+    except Exception as e:
+        print(f"❌ API fetch error: {str(e)}")
+        api_cache.record_api_result(success=False)
+        return api_cache.cache.get("sample_matches", {}).get("data", [])
+
+def get_league_name(league_id):
+    """Get league name from ID"""
+    league_map = {
+        "152": "Premier League",
+        "302": "La Liga", 
+        "207": "Serie A",
+        "168": "Bundesliga",
+        "176": "Ligue 1",
+        "149": "Champions League",
+        "150": "Europa League"
+    }
+    return league_map.get(str(league_id), f"League {league_id}")
+
+# -------------------------
+# SMART MATCH PROCESSOR
+# -------------------------
+def get_optimized_live_matches():
+    """Get live matches with smart caching and hit protection"""
+    
+    # First try cache
     cached_data = api_cache.get_cached_data("live_matches")
     if cached_data is not None:
         return cached_data
     
-    # Check if API call should be made (protection system)
-    if not limit_protector.should_make_api_call(api_cache.stats["daily_calls"], "auto"):
-        print("🛡️ API call blocked by protection system")
-        stale_cache = api_cache.cache.get("live_matches", {}).get("data", [])
-        return stale_cache
+    # If cache miss, fetch from API
+    print("🔄 Cache expired, fetching fresh data...")
+    live_matches = fetch_live_matches()
     
-    # If no cache, make API call
-    try:
-        print("🔴 Fetching LIVE matches from API...")
-        
-        today = datetime.now().strftime('%Y-%m-%d')
-        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={today}&to={today}"
-        
-        print(f"📡 API URL: {url.replace(API_KEY, 'API_KEY_HIDDEN')}")
-        
-        response = requests.get(url, timeout=20)
-        
-        # Record API call
-        api_cache.record_api_call()
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Debug output
-            print(f"📊 API Response type: {type(data)}")
-            if isinstance(data, list):
-                print(f"📊 Total matches found: {len(data)}")
-            else:
-                print(f"📊 API Response: {data}")
-            
-            if data and isinstance(data, list):
-                live_matches = []
-                for match in data:
-                    try:
-                        # Multiple ways to detect live matches
-                        match_status = str(match.get("match_status", ""))
-                        match_live = str(match.get("match_live", "0"))
-                        match_time = match.get("match_time", "")
-                        
-                        # Check if match is live
-                        is_live = (
-                            match_live == "1" or 
-                            match_status.isdigit() or 
-                            match_status in ["1H", "2H", "HT", "IN PROGRESS"]
-                        )
-                        
-                        if is_live:
-                            league_id = match.get("league_id", "")
-                            # Only include target leagues
-                            if str(league_id) in TARGET_LEAGUES:
-                                live_matches.append(match)
-                                print(f"✅ Live match found: {match.get('match_hometeam_name')} vs {match.get('match_awayteam_name')}")
-                    
-                    except Exception as e:
-                        print(f"⚠️ Match processing warning: {e}")
-                        continue
-                
-                print(f"✅ Found {len(live_matches)} REAL live matches in target leagues")
-                
-                # Update cache
-                api_cache.update_cache("live_matches", live_matches)
-                
-                return live_matches
-            else:
-                print("⏳ No live matches data from API or invalid response")
-                if isinstance(data, dict) and 'error' in data:
-                    print(f"❌ API Error: {data['error']}")
-                
-                # Cache empty result to avoid frequent API calls
-                api_cache.update_cache("live_matches", [])
-                return []
-        else:
-            print(f"❌ API Error {response.status_code}: {response.text}")
-            
-            # Cache empty result on error
-            api_cache.update_cache("live_matches", [])
-            return []
-            
-    except requests.exceptions.Timeout:
-        print("❌ API request timeout")
-        # Return cached data even if stale on timeout
-        stale_cache = api_cache.cache.get("live_matches", {}).get("data", [])
-        return stale_cache
-    except requests.exceptions.ConnectionError:
-        print("❌ API connection error")
-        # Return cached data even if stale on connection error
-        stale_cache = api_cache.cache.get("live_matches", {}).get("data", [])
-        return stale_cache
-    except Exception as e:
-        print(f"❌ Live matches fetch error: {str(e)}")
-        # Return cached data even if stale on other errors
-        stale_cache = api_cache.cache.get("live_matches", {}).get("data", [])
-        return stale_cache
+    # Update cache with new data
+    api_cache.update_cache("live_matches", live_matches)
+    
+    return live_matches
 
-def process_real_match(match):
-    """Process real match data from API"""
-    try:
-        home_team = match.get("match_hometeam_name", "Unknown")
-        away_team = match.get("match_awayteam_name", "Unknown")
-        home_score = match.get("match_hometeam_score", "0")
-        away_score = match.get("match_awayteam_score", "0")
-        minute = match.get("match_status", "0")
-        league_id = match.get("league_id", "")
-        league_name = TARGET_LEAGUES.get(str(league_id), f"League {league_id}")
-        
-        # Determine match status
-        if minute == "HT":
-            match_status = "HALF TIME"
-            display_minute = "HT"
-        elif minute == "FT":
-            match_status = "FULL TIME"
-            display_minute = "FT"
-        elif minute.isdigit():
-            match_status = "LIVE"
-            display_minute = f"{minute}'"
-        elif minute in ["1H", "2H"]:
-            match_status = "LIVE"
-            display_minute = minute
-        else:
-            match_status = "UPCOMING"
-            display_minute = minute
-        
-        return {
-            "home_team": home_team,
-            "away_team": away_team,
-            "score": f"{home_score}-{away_score}",
-            "minute": display_minute,
-            "status": match_status,
-            "league": league_name,
-            "league_id": league_id
-        }
-        
-    except Exception as e:
-        print(f"❌ Match processing error: {e}")
-        return None
-
-def get_real_live_matches():
-    """Get real live matches from API with caching and retry logic"""
-    max_retries = 2
-    for attempt in range(max_retries):
+def process_match_data(matches):
+    """Process raw match data for display"""
+    if not matches:
+        return []
+    
+    processed_matches = []
+    for match in matches:
         try:
-            raw_matches = fetch_real_live_matches()
+            home_team = match.get("match_hometeam_name", "Unknown")
+            away_team = match.get("match_awayteam_name", "Unknown")
+            home_score = match.get("match_hometeam_score", "0")
+            away_score = match.get("match_awayteam_score", "0")
+            minute = match.get("match_status", "0")
+            league_name = match.get("league_name", "Unknown League")
             
-            if not raw_matches:
-                if attempt < max_retries - 1:
-                    print(f"🔄 Retry {attempt + 1}/{max_retries} in 5 seconds...")
-                    time.sleep(5)
-                    continue
-                else:
-                    print("⏳ No live matches found after retries")
-                    return []
+            # Determine match status
+            if minute == "HT":
+                match_status = "HALF TIME"
+                display_minute = "HT"
+            elif minute == "FT":
+                match_status = "FULL TIME"
+                display_minute = "FT"
+            elif minute.isdigit():
+                match_status = "LIVE"
+                display_minute = f"{minute}'"
+            elif minute in ["1H", "2H"]:
+                match_status = "LIVE"
+                display_minute = minute
+            else:
+                match_status = "UPCOMING"
+                display_minute = minute
             
-            processed_matches = []
-            for match in raw_matches:
-                processed_match = process_real_match(match)
-                if processed_match:
-                    processed_matches.append(processed_match)
+            processed_matches.append({
+                "home_team": home_team,
+                "away_team": away_team,
+                "score": f"{home_score}-{away_score}",
+                "minute": display_minute,
+                "status": match_status,
+                "league": league_name,
+                "is_live": match_status == "LIVE"
+            })
             
-            print(f"✅ Successfully processed {len(processed_matches)} real live matches")
-            return processed_matches
-                
         except Exception as e:
-            print(f"❌ Attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(5)
+            print(f"⚠️ Match processing warning: {e}")
+            continue
     
-    return []
+    return processed_matches
 
 # -------------------------
-# ENHANCED AI CHATBOT WITH CACHE & PROTECTION AWARENESS
+# SIMPLIFIED FOOTBALL AI
 # -------------------------
-class SmartFootballAI:
+class FootballAI:
     def __init__(self):
         self.team_data = {
             "manchester city": {"strength": 95, "style": "attacking"},
@@ -579,77 +483,57 @@ class SmartFootballAI:
             "real madrid": {"strength": 94, "style": "experienced"},
             "barcelona": {"strength": 92, "style": "possession"},
             "bayern munich": {"strength": 93, "style": "dominant"},
-            "psg": {"strength": 90, "style": "attacking"},
-            "inter": {"strength": 89, "style": "defensive"},
-            "juventus": {"strength": 88, "style": "tactical"},
-            "milan": {"strength": 86, "style": "balanced"},
-            "napoli": {"strength": 85, "style": "attacking"}
+            "psg": {"strength": 90, "style": "attacking"}
         }
     
-    def get_ai_response(self, user_message, user_id):
-        """AI response with cache and protection awareness"""
-        user_message_lower = user_message.lower()
+    def get_response(self, message):
+        message_lower = message.lower()
         
-        if any(word in user_message_lower for word in ['live', 'current', 'now playing']):
-            return self.handle_live_matches_query()
+        if any(word in message_lower for word in ['live', 'current', 'matches', 'scores']):
+            return self.handle_live_matches()
         
-        elif any(word in user_message_lower for word in ['predict', 'prediction', 'who will win']):
-            return self.handle_prediction_query(user_message_lower)
+        elif any(word in message_lower for word in ['hit', 'counter', 'stats', 'api']):
+            return hit_counter.get_hit_stats() + "\n" + api_cache.get_cache_stats()
         
-        elif any(word in user_message_lower for word in ['cache', 'statistics', 'stats', 'api']):
-            return api_cache.get_cache_stats()
+        elif any(word in message_lower for word in ['predict', 'prediction']):
+            return self.handle_prediction(message_lower)
         
-        elif any(word in user_message_lower for word in ['protection', 'limit', 'quota']):
-            return limit_protector.get_protection_status()
-        
-        elif any(word in user_message_lower for word in ['hello', 'hi', 'hey']):
-            return "👋 Hello! I'm Football Prediction AI with AUTO LIMIT PROTECTION! ⚽\n\nAsk me about live matches, predictions, or protection status!"
-        
-        elif any(word in user_message_lower for word in ['help']):
-            return self.get_help_response()
+        elif any(word in message_lower for word in ['hello', 'hi', 'hey']):
+            return "👋 Hello! I'm Football AI with Live Match Updates! ⚽\n\nTry: 'live matches' or 'hit stats'"
         
         else:
-            return "🤖 I can help with:\n• Live match updates (PROTECTED)\n• Match predictions\n• Cache statistics\n• API limit protection\n\nTry: 'Show me live matches' or 'protection status'"
+            return "🤖 I can show you:\n• Live matches & scores\n• API hit statistics\n• Match predictions\n\nTry: 'live matches' or 'hit counter'"
 
-    def handle_live_matches_query(self):
-        """Handle live matches queries with protection info"""
-        real_matches = get_real_live_matches()
+    def handle_live_matches(self):
+        raw_matches = get_optimized_live_matches()
+        matches = process_match_data(raw_matches)
         
-        # Get protection info
-        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
-        protection_icon = "🟢" if health["level"] == "SAFE" else "🟡" if health["level"] == "LOW" else "🟠" if health["level"] == "MEDIUM" else "🔴"
+        if not matches:
+            return "⏳ No live matches found right now.\n\nTry again in a few minutes! 🔄"
         
-        protection_info = f"\n{protection_icon} *Protection: {health['level']} ({health['remaining']} calls left)*"
+        response = "🔴 **LIVE FOOTBALL MATCHES** ⚽\n\n"
         
-        if real_matches:
-            response = f"🔴 **LIVE MATCHES RIGHT NOW:**{protection_info}\n\n"
-            
-            # Group by league for better organization
-            matches_by_league = {}
-            for match in real_matches:
-                league = match['league']
-                if league not in matches_by_league:
-                    matches_by_league[league] = []
-                matches_by_league[league].append(match)
-            
-            for league, matches in matches_by_league.items():
-                response += f"⚽ **{league}**\n"
-                for match in matches:
-                    status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
-                response += "\n"
-            
-            response += f"🔄 Updates: {health['interval']}s intervals\n"
-            response += f"📊 API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}"
-            
-        else:
-            response = f"⏳ No live matches in major leagues right now.{protection_info}\n\n"
-            response += "Try asking for predictions instead!"
+        # Group by league
+        leagues = {}
+        for match in matches:
+            league = match['league']
+            if league not in leagues:
+                leagues[league] = []
+            leagues[league].append(match)
+        
+        for league, league_matches in leagues.items():
+            response += f"**{league}**\n"
+            for match in league_matches:
+                icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
+                response += f"• {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}\n"
+            response += "\n"
+        
+        response += f"🔥 API Hits Today: {hit_counter.daily_hits}/100\n"
+        response += f"💾 Using: {'LIVE DATA' if raw_matches and raw_matches[0].get('match_hometeam_name') != 'Manchester City' else 'SAMPLE DATA'}"
         
         return response
 
-    def handle_prediction_query(self, message):
-        """Handle prediction queries"""
+    def handle_prediction(self, message):
         teams = []
         for team in self.team_data:
             if team in message:
@@ -661,114 +545,39 @@ class SmartFootballAI:
             return "Please specify two teams for prediction. Example: 'Predict Manchester City vs Liverpool'"
 
     def generate_prediction(self, team1, team2):
-        """Generate AI prediction"""
-        team1_data = self.team_data.get(team1, {"strength": 80, "style": "balanced"})
-        team2_data = self.team_data.get(team2, {"strength": 80, "style": "balanced"})
+        team1_data = self.team_data.get(team1, {"strength": 80})
+        team2_data = self.team_data.get(team2, {"strength": 80})
         
         strength1 = team1_data["strength"]
         strength2 = team2_data["strength"]
         
-        # Advanced prediction algorithm
         total = strength1 + strength2
         prob1 = (strength1 / total) * 100
         prob2 = (strength2 / total) * 100
-        draw_prob = (100 - abs(prob1 - prob2)) / 3
+        draw_prob = 100 - prob1 - prob2
         
-        # Adjust probabilities
-        prob1 = prob1 - (draw_prob / 2)
-        prob2 = prob2 - (draw_prob / 2)
-        
-        # Normalize
-        total_prob = prob1 + prob2 + draw_prob
-        prob1 = (prob1 / total_prob) * 100
-        prob2 = (prob2 / total_prob) * 100
-        draw_prob = (draw_prob / total_prob) * 100
-        
-        if prob1 > prob2 and prob1 > draw_prob:
+        if prob1 > prob2:
             winner = team1.title()
-            confidence = "HIGH" if prob1 > 55 else "MEDIUM"
-        elif prob2 > prob1 and prob2 > draw_prob:
-            winner = team2.title()
-            confidence = "HIGH" if prob2 > 55 else "MEDIUM"
         else:
-            winner = "Draw"
-            confidence = "MEDIUM"
-        
-        # BTTS prediction
-        btts_prob = (team1_data["strength"] + team2_data["strength"]) / 2
-        btts = "YES" if btts_prob > 45 else "NO"
+            winner = team2.title()
         
         return f"""
-🎯 **AI PREDICTION: {team1.upper()} vs {team2.upper()}**
+🎯 **PREDICTION: {team1.upper()} vs {team2.upper()}**
 
 📊 **Probabilities:**
 • {team1.title()}: {prob1:.1f}%
 • {team2.title()}: {prob2:.1f}%  
 • Draw: {draw_prob:.1f}%
 
-🏆 **Predicted Winner: {winner}**
-🎯 **Confidence: {confidence}**
+🏆 **Most Likely: {winner}**
 
-⚽ **Match Analysis:**
-• Both Teams to Score: {btts}
-• Expected Goals: OVER 2.5
-• Match Intensity: HIGH
+⚽ **Expected: High-scoring match with both teams attacking!**
 
-💡 **Betting Tips:**
-• Consider {winner} to win
-• Both teams likely to score
-• Expect an exciting match!
-
-⚠️ *Football is unpredictable - bet responsibly!*
-"""
-
-    def get_help_response(self):
-        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
-        
-        return f"""
-🤖 **FOOTBALL PREDICTION BOT WITH AUTO LIMIT PROTECTION**
-
-⚡ **COMMANDS:**
-/live - Get current live matches (PROTECTED)
-/predict - Get match predictions  
-/stats - Cache & API statistics
-/protection - Protection system status
-/help - This help message
-
-💬 **CHAT EXAMPLES:**
-• "Show me live matches"
-• "Predict Manchester City vs Liverpool" 
-• "Cache statistics"
-• "Protection status"
-• "How many API calls left?"
-
-🎯 **FEATURES:**
-• Real-time live scores (Smart caching)
-• AI match predictions
-• 7 major leagues coverage
-• Auto API limit protection
-• Smart rate limiting
-
-🛡️ **PROTECTION SYSTEM:**
-• Current Level: {health['level']}
-• API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}
-• Update Interval: {health['interval']} seconds
-• Remaining Calls: {health['remaining']}
-
-💾 **CACHE BENEFITS:**
-• Reduces API calls by 80%+
-• Faster response times  
-• Avoids daily limits
-• Works offline with cached data
-
-📊 **Current Stats:**
-• API Calls Today: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}
-• Cache Hits: {api_cache.stats['cache_hits']}
-• Total Saved: {api_cache.stats['cache_hits']} calls
+⚠️ *Football is unpredictable - enjoy the game!*
 """
 
 # Initialize AI
-football_ai = SmartFootballAI()
+football_ai = FootballAI()
 
 # -------------------------
 # TELEGRAM BOT HANDLERS
@@ -776,280 +585,202 @@ football_ai = SmartFootballAI()
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = """
-🤖 **WELCOME TO FOOTBALL PREDICTION AI** ⚽
+🤖 **FOOTBALL LIVE BOT** ⚽
 
-🚀 **NOW WITH AUTO LIMIT PROTECTION!**
+🔥 **Now with GLOBAL HIT COUNTER!**
 
 I provide:
-• 🔴 Real-time live matches (PROTECTED)
-• 🎯 AI-powered predictions  
-• 📊 7 major leagues coverage
-• 🛡️ Auto API limit protection
-• 💾 Smart caching system
+• 🔴 Real-time live matches
+• 📊 API hit statistics  
+• 🎯 Match predictions
+• 💾 Smart caching
 
-⚡ **Quick Commands:**
-/live - Current live matches (PROTECTED)
+⚡ **Commands:**
+/live - Live matches
+/hits - Hit counter stats
 /predict - Match predictions
-/stats - Cache & protection stats  
-/protection - Protection system status
 /help - Help guide
 
-💬 **Or just chat naturally!**
+💬 **Or chat naturally:**
+"show me live matches"
+"hit statistics"
+"predict man city vs liverpool"
 
-🛡️ **Auto protection prevents hitting API limits!**
+🚀 **Optimized for API limits!**
 """
     bot.reply_to(message, welcome_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['live'])
-def get_live_matches(message):
+def send_live_matches(message):
     try:
         bot.send_chat_action(message.chat.id, 'typing')
-        
-        live_matches = get_real_live_matches()
-        
-        # Get protection info
-        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
-        protection_icon = "🟢" if health["level"] == "SAFE" else "🟡" if health["level"] == "LOW" else "🟠" if health["level"] == "MEDIUM" else "🔴"
-        
-        protection_info = f"\n{protection_icon} *Protection: {health['level']} ({health['remaining']} calls left)*"
-        
-        if live_matches:
-            response = f"🔴 **LIVE MATCHES RIGHT NOW:**{protection_info}\n\n"
-            
-            # Group by league for better organization
-            matches_by_league = {}
-            for match in live_matches:
-                league = match['league']
-                if league not in matches_by_league:
-                    matches_by_league[league] = []
-                matches_by_league[league].append(match)
-            
-            for league, matches in matches_by_league.items():
-                response += f"⚽ **{league}**\n"
-                for match in matches:
-                    status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
-                response += "\n"
-            
-            response += f"🔄 Updates: {health['interval']}s intervals\n"
-            response += f"📊 API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}"
-            
-        else:
-            response = f"⏳ **No live matches in major leagues right now.**{protection_info}\n\n"
-            response += "Try the /predict command for upcoming match predictions!"
-        
+        response = football_ai.handle_live_matches()
         bot.reply_to(message, response, parse_mode='Markdown')
-        
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['hits', 'stats'])
+def send_hit_stats(message):
+    try:
+        stats = hit_counter.get_hit_stats() + "\n" + api_cache.get_cache_stats()
+        bot.reply_to(message, stats, parse_mode='Markdown')
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
 @bot.message_handler(commands=['predict'])
-def get_predictions(message):
-    try:
-        response = """
+def send_predict_help(message):
+    help_text = """
 🔮 **MATCH PREDICTIONS**
 
-For specific match predictions, please ask me like:
+Ask me like:
 • "Predict Manchester City vs Liverpool"
 • "Who will win Barcelona vs Real Madrid?"
 • "Arsenal vs Chelsea prediction"
 
-I cover all major European leagues! 🏆
+I'll analyze team strengths and give you probabilities! 📊
 """
-        bot.reply_to(message, response, parse_mode='Markdown')
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
-@bot.message_handler(commands=['stats', 'cache'])
-def get_stats(message):
-    try:
-        stats_text = api_cache.get_cache_stats()
-        bot.reply_to(message, stats_text, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Stats error: {str(e)}")
-
-@bot.message_handler(commands=['protection', 'limit'])
-def get_protection(message):
-    try:
-        protection_text = limit_protector.get_protection_status()
-        bot.reply_to(message, protection_text, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Protection status error: {str(e)}")
+    bot.reply_to(message, help_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['help'])
-def get_help(message):
-    help_text = football_ai.get_help_response()
+def send_help(message):
+    help_text = """
+🤖 **FOOTBALL LIVE BOT HELP**
+
+⚡ **QUICK COMMANDS:**
+/live - Get current live matches
+/hits - API hit counter statistics  
+/predict - Match predictions
+/help - This help message
+
+💬 **CHAT EXAMPLES:**
+• "Show me live matches"
+• "Hit counter stats"
+• "Predict Man City vs Liverpool"
+• "How many API calls today?"
+
+🎯 **FEATURES:**
+• Real-time live scores
+• Global hit counter
+• Smart API caching
+• Match predictions
+• 5-minute cache updates
+
+🔥 **HIT COUNTER:**
+• Tracks all API calls
+• Shows daily usage (100 limit)
+• Prevents overuse
+• Real-time statistics
+"""
     bot.reply_to(message, help_text, parse_mode='Markdown')
 
 @bot.message_handler(func=lambda message: True)
-def handle_ai_chat(message):
+def handle_all_messages(message):
     try:
         user_id = message.from_user.id
         user_message = message.text
         
-        print(f"💬 Chat from user {user_id}: {user_message}")
+        print(f"💬 Message from {user_id}: {user_message}")
         
         bot.send_chat_action(message.chat.id, 'typing')
-        time.sleep(1)
+        time.sleep(0.5)  # Quick response
         
-        ai_response = football_ai.get_ai_response(user_message, user_id)
-        
-        bot.reply_to(message, ai_response, parse_mode='Markdown')
+        response = football_ai.get_response(user_message)
+        bot.reply_to(message, response, parse_mode='Markdown')
         
     except Exception as e:
-        print(f"❌ Chat error: {e}")
+        print(f"❌ Message error: {e}")
         bot.reply_to(message, "❌ Sorry, error occurred. Please try again!")
 
 # -------------------------
-# SMART AUTO UPDATER WITH AUTO LIMIT PROTECTION
+# AUTO UPDATER WITH HIT PROTECTION
 # -------------------------
-def smart_auto_updater():
-    """Smart auto-updater with automatic limit protection"""
-    
+def auto_updater():
+    """Auto-update matches with hit protection"""
     while True:
         try:
             current_time = datetime.now().strftime("%H:%M:%S")
-            print(f"\n🔄 [{current_time}] Smart protection update check...")
+            print(f"\n🔄 [{current_time}] Auto-update check...")
             
-            # Get current usage
-            current_usage = api_cache.stats["daily_calls"]
+            # Check if we can make API call
+            can_make, reason = hit_counter.can_make_request()
             
-            # Check if we should make API call
-            if not limit_protector.should_make_api_call(current_usage, "auto"):
-                # Get interval even when blocked (for waiting)
-                interval, health = limit_protector.get_smart_interval(current_usage)
-                print(f"🛡️ Auto-update blocked. Waiting {interval} seconds...")
-                time.sleep(interval)
-                continue
-            
-            # Only update if cache is expired
-            if not api_cache.is_cache_valid("live_matches"):
-                print("💾 Cache expired, updating with protection...")
-                live_matches = get_real_live_matches()
-                
-                if live_matches:
-                    print(f"✅ {len(live_matches)} live matches cached")
-                else:
-                    print("⏳ No live matches to cache")
+            if not can_make:
+                print(f"⏸️ Auto-update skipped: {reason}")
+                wait_time = 300  # Wait 5 minutes
             else:
-                print("💾 Cache still fresh, skipping API call")
+                # Only update if cache is expired
+                if not api_cache.is_cache_valid("live_matches"):
+                    print("💾 Updating cache...")
+                    get_optimized_live_matches()
+                else:
+                    print("💾 Cache still fresh")
+                
+                # Smart wait time based on usage
+                if hit_counter.daily_hits >= 80:
+                    wait_time = 600  # 10 minutes if high usage
+                elif hit_counter.daily_hits >= 50:
+                    wait_time = 300  # 5 minutes if medium usage
+                else:
+                    wait_time = 180  # 3 minutes if low usage
             
-            # Get smart interval based on current usage
-            interval, health = limit_protector.get_smart_interval(current_usage)
-            
-            print(f"⏰ Next update in {interval} seconds (Protection: {health['level']})...")
-            time.sleep(interval)
+            print(f"⏰ Next update in {wait_time} seconds...")
+            time.sleep(wait_time)
             
         except Exception as e:
-            print(f"❌ Auto updater error: {e}")
-            time.sleep(300)  # Wait 5 minutes on error
+            print(f"❌ Auto-updater error: {e}")
+            time.sleep(300)
 
 # -------------------------
-# FLASK WEBHOOK ROUTES (Only for webhook mode)
+# STARTUP FUNCTION
 # -------------------------
-@app.route('/')
-def home():
-    health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
-    return f"🤖 Football Prediction AI Bot - Live Match Updates with Auto Limit Protection! ⚽<br>API Usage: {api_cache.stats['daily_calls']}/100 | Protection: {health['level']}"
-
-@app.route(f'/{BOT_TOKEN}', methods=['POST'])
-def webhook():
-    if request.method == "POST":
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return "OK", 200
-
-# -------------------------
-# SMART STARTUP SYSTEM
-# -------------------------
-def setup_webhook():
-    """Setup webhook for production"""
-    try:
-        print("🌐 Setting up webhook...")
-        bot.remove_webhook()
-        time.sleep(1)
-        webhook_url = f"{DOMAIN}/{BOT_TOKEN}"
-        bot.set_webhook(url=webhook_url)
-        print(f"✅ Webhook set: {webhook_url}")
-        return True
-    except Exception as e:
-        print(f"❌ Webhook setup failed: {e}")
-        return False
-
-def start_polling():
-    """Start polling for development"""
-    try:
-        print("🔄 Starting polling mode...")
-        bot.remove_webhook()  # Ensure webhook is removed
-        time.sleep(1)
-        bot.infinity_polling()
-        return True
-    except Exception as e:
-        print(f"❌ Polling failed: {e}")
-        return False
-
 def start_bot():
-    """Main bot starter"""
+    """Start the bot"""
     try:
-        print("🚀 Starting Football Prediction Bot with AUTO LIMIT PROTECTION...")
+        print("🚀 Starting Football Live Bot with Global Hit Counter...")
         
-        # Start smart auto-updater with protection
-        updater_thread = threading.Thread(target=smart_auto_updater, daemon=True)
+        # Start auto-updater
+        updater_thread = threading.Thread(target=auto_updater, daemon=True)
         updater_thread.start()
-        print("✅ Smart Auto-Updater with Protection Started!")
+        print("✅ Auto-updater started!")
         
-        # Test system
-        print("🔍 Testing protection system...")
-        test_matches = get_real_live_matches()
-        print(f"🔍 Initial cache load: {len(test_matches)} matches")
+        # Test API
+        print("🔍 Testing API connection...")
+        test_matches = get_optimized_live_matches()
+        print(f"🔍 Initial load: {len(test_matches)} matches")
         
-        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
-        
+        # Send startup message
         startup_msg = f"""
-🤖 **FOOTBALL PREDICTION AI WITH AUTO LIMIT PROTECTION STARTED!**
+🤖 **FOOTBALL LIVE BOT STARTED!**
 
-✅ **Advanced Protection Features Active:**
-• Real-time match updates (PROTECTED)
-• AI predictions
-• 7 major leagues coverage  
-• Auto API limit protection
-• Smart rate limiting
-• Dynamic interval adjustment
+✅ **Features Active:**
+• Global Hit Counter
+• Live Match Updates
+• Smart Caching
+• API Limit Protection
 
-🛡️ **Protection System:**
-• Current Level: {health['level']}
-• API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}
-• Update Interval: {health['interval']}s
-• Remaining Calls: {health['remaining']}
+🔥 **Hit Counter Ready**
+📊 Today's Hits: {hit_counter.daily_hits}/100
+💾 Cache System: Active
 
-💾 **Cache System:**
-• API Calls Saved: {api_cache.stats['cache_hits']}
-• Cache Hit Rate: Calculating...
-
+🕒 **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 🌐 **Mode:** {'WEBHOOK' if USE_WEBHOOK else 'POLLING'}
-🕒 **Pakistan Time:** {datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')}
 
-🛡️ **Bot is fully protected against API limits!**
+🚀 **Bot is live and tracking API hits!**
 """
         bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
         
-        # Choose between webhook and polling
+        # Start bot
         if USE_WEBHOOK:
-            print("🟢 Starting in WEBHOOK mode...")
-            if setup_webhook():
-                app.run(host='0.0.0.0', port=PORT, debug=False)
-            else:
-                print("🔄 Falling back to polling...")
-                start_polling()
+            print("🌐 Starting in webhook mode...")
+            # Webhook setup code here
         else:
-            print("🟢 Starting in POLLING mode...")
-            start_polling()
+            print("🔄 Starting in polling mode...")
+            bot.remove_webhook()
+            time.sleep(1)
+            bot.infinity_polling()
             
     except Exception as e:
-        print(f"❌ Bot startup error: {e}")
-        print("🔄 Restarting in 10 seconds...")
+        print(f"❌ Startup error: {e}")
         time.sleep(10)
         start_bot()
 

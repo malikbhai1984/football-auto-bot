@@ -20,6 +20,9 @@ from sklearn.metrics import accuracy_score, classification_report
 import warnings
 warnings.filterwarnings('ignore')
 
+import pytz
+PK_TZ = pytz.timezone("Asia/Karachi")
+
 # -------------------------
 # Load environment variables
 # -------------------------

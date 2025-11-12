@@ -21,6 +21,8 @@ load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_KEY = os.environ.get("API_KEY")
+PORT = int(os.environ.get("PORT", 8080))
+DOMAIN = os.environ.get("DOMAIN")
 
 if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY]):
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, or API_KEY missing!")
@@ -28,10 +30,15 @@ if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY]):
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
+# ✅ Check if we should use webhook or polling
+USE_WEBHOOK = bool(DOMAIN)
+
+print(f"🎯 Starting Football Prediction Bot...")
+print(f"🌐 Webhook Mode: {USE_WEBHOOK}")
+print(f"🔗 Domain: {DOMAIN}")
+
 # ✅ CORRECT API URL FOR API-FOOTBALL.COM
 API_URL = "https://apiv3.apifootball.com"
-
-print("🎯 Starting REAL-TIME FOOTBALL PREDICTION BOT WITH CACHING...")
 
 # -------------------------
 # SMART API CACHING SYSTEM
@@ -344,8 +351,7 @@ def process_real_match(match):
             "minute": display_minute,
             "status": match_status,
             "league": league_name,
-            "league_id": league_id,
-            "raw_data": match
+            "league_id": league_id
         }
         
     except Exception as e:
@@ -444,14 +450,23 @@ class SmartFootballAI:
         if real_matches:
             response = f"🔴 **LIVE MATCHES RIGHT NOW:**{cache_info}\n\n"
             
+            # Group by league for better organization
+            matches_by_league = {}
             for match in real_matches:
-                status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                response += f"⚽ **{match['league']}**\n"
-                response += f"• {match['home_team']} {match['score']} {match['away_team']}\n"
-                response += f"• {status_icon} {match['minute']} - {match['status']}\n\n"
+                league = match['league']
+                if league not in matches_by_league:
+                    matches_by_league[league] = []
+                matches_by_league[league].append(match)
+            
+            for league, matches in matches_by_league.items():
+                response += f"⚽ **{league}**\n"
+                for match in matches:
+                    status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
+                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
+                response += "\n"
             
             response += f"🔄 Updates every 2 minutes (Cached)\n"
-            response += f"📊 API Calls Saved: {api_cache.stats['cache_hits']}"
+            response += f"📊 API Calls Today: {api_cache.stats['daily_calls']}/100"
             
         else:
             response = f"⏳ No live matches in major leagues right now.{cache_info}\n\n"
@@ -618,11 +633,20 @@ def get_live_matches(message):
         if live_matches:
             response = f"🔴 **LIVE MATCHES RIGHT NOW:**{cache_info}\n\n"
             
+            # Group by league for better organization
+            matches_by_league = {}
             for match in live_matches:
-                status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                response += f"⚽ **{match['league']}**\n"
-                response += f"• {match['home_team']} {match['score']} {match['away_team']}\n"
-                response += f"• {status_icon} {match['minute']} - {match['status']}\n\n"
+                league = match['league']
+                if league not in matches_by_league:
+                    matches_by_league[league] = []
+                matches_by_league[league].append(match)
+            
+            for league, matches in matches_by_league.items():
+                response += f"⚽ **{league}**\n"
+                for match in matches:
+                    status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
+                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
+                response += "\n"
             
             response += f"🔄 Updates every 2 minutes (Cached)\n"
             response += f"📊 API Calls Today: {api_cache.stats['daily_calls']}/100"
@@ -732,10 +756,51 @@ def smart_auto_updater():
             time.sleep(300)
 
 # -------------------------
-# STARTUP & POLLING
+# FLASK WEBHOOK ROUTES (Only for webhook mode)
 # -------------------------
+@app.route('/')
+def home():
+    return "🤖 Football Prediction AI Bot - Live Match Updates with Caching! ⚽"
+
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    if request.method == "POST":
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return "OK", 200
+
+# -------------------------
+# SMART STARTUP SYSTEM
+# -------------------------
+def setup_webhook():
+    """Setup webhook for production"""
+    try:
+        print("🌐 Setting up webhook...")
+        bot.remove_webhook()
+        time.sleep(1)
+        webhook_url = f"{DOMAIN}/{BOT_TOKEN}"
+        bot.set_webhook(url=webhook_url)
+        print(f"✅ Webhook set: {webhook_url}")
+        return True
+    except Exception as e:
+        print(f"❌ Webhook setup failed: {e}")
+        return False
+
+def start_polling():
+    """Start polling for development"""
+    try:
+        print("🔄 Starting polling mode...")
+        bot.remove_webhook()  # Ensure webhook is removed
+        time.sleep(1)
+        bot.infinity_polling()
+        return True
+    except Exception as e:
+        print(f"❌ Polling failed: {e}")
+        return False
+
 def start_bot():
-    """Start the bot with polling"""
+    """Main bot starter"""
     try:
         print("🚀 Starting Football Prediction Bot with SMART CACHING...")
         
@@ -764,15 +829,25 @@ def start_bot():
 • Today's Calls: {api_cache.stats['daily_calls']}/100
 • Cache Hit Rate: Calculating...
 
+🌐 **Mode:** {'WEBHOOK' if USE_WEBHOOK else 'POLLING'}
 🕒 **Pakistan Time:** {datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')}
 
 💬 **Bot is ready with efficient caching!**
 """
         bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
         
-        print("🟢 Bot is now running with SMART CACHING...")
-        bot.infinity_polling()
-        
+        # Choose between webhook and polling
+        if USE_WEBHOOK:
+            print("🟢 Starting in WEBHOOK mode...")
+            if setup_webhook():
+                app.run(host='0.0.0.0', port=PORT, debug=False)
+            else:
+                print("🔄 Falling back to polling...")
+                start_polling()
+        else:
+            print("🟢 Starting in POLLING mode...")
+            start_polling()
+            
     except Exception as e:
         print(f"❌ Bot startup error: {e}")
         print("🔄 Restarting in 10 seconds...")

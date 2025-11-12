@@ -13,6 +13,24 @@ from dotenv import load_dotenv
 import json
 import pytz
 
+
+
+# global hit counter
+import time
+
+hits = 0
+
+def fetch_live_matches():
+    global hits
+    hits += 1
+    print(f"🔥 API HIT #{hits} at {time.strftime('%H:%M:%S')}")
+
+    url = "https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey=839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
+    response = requests.get(url)
+    data = response.json()
+    return data
+
+
 # -------------------------
 # Load environment variables
 # -------------------------

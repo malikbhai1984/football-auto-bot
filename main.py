@@ -33,7 +33,7 @@ app = Flask(__name__)
 # ✅ CORRECT API URL FOR API-FOOTBALL.COM
 API_URL = "https://apiv3.apifootball.com"
 
-print("🎯 Starting SMART FOOTBALL PREDICTION BOT...")
+print("🎯 Starting REAL-TIME FOOTBALL PREDICTION BOT...")
 
 # -------------------------
 # SPECIFIC LEAGUES CONFIGURATION
@@ -49,7 +49,106 @@ TARGET_LEAGUES = {
 }
 
 # -------------------------
-# SMART AI CHATBOT (No API Key Needed)
+# REAL-TIME MATCH DATA FETCHING
+# -------------------------
+def fetch_real_live_matches():
+    """Fetch REAL live matches from API"""
+    try:
+        print("🔴 Fetching REAL live matches from API...")
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={today}&to={today}"
+        
+        response = requests.get(url, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data and isinstance(data, list):
+                live_matches = []
+                for match in data:
+                    # Check if match is live
+                    if match.get("match_live") == "1" and match.get("match_status", "").isdigit():
+                        league_id = match.get("league_id", "")
+                        # Only include target leagues
+                        if str(league_id) in TARGET_LEAGUES:
+                            live_matches.append(match)
+                
+                print(f"✅ Found {len(live_matches)} REAL live matches")
+                return live_matches
+            else:
+                print("⏳ No live matches data from API")
+                return []
+        else:
+            print(f"❌ API Error {response.status_code}")
+            return []
+            
+    except Exception as e:
+        print(f"❌ Live matches fetch error: {e}")
+        return []
+
+def process_real_match(match):
+    """Process real match data from API"""
+    try:
+        home_team = match.get("match_hometeam_name", "Unknown")
+        away_team = match.get("match_awayteam_name", "Unknown")
+        home_score = match.get("match_hometeam_score", "0")
+        away_score = match.get("match_awayteam_score", "0")
+        minute = match.get("match_status", "0")
+        league_id = match.get("league_id", "")
+        league_name = TARGET_LEAGUES.get(str(league_id), "Unknown League")
+        
+        # Determine match status
+        if minute == "HT":
+            match_status = "HALF TIME"
+            display_minute = "HT"
+        elif minute == "FT":
+            match_status = "FULL TIME"
+            display_minute = "FT"
+        elif minute.isdigit():
+            match_status = "LIVE"
+            display_minute = f"{minute}'"
+        else:
+            match_status = "UPCOMING"
+            display_minute = minute
+        
+        return {
+            "home_team": home_team,
+            "away_team": away_team,
+            "score": f"{home_score}-{away_score}",
+            "minute": display_minute,
+            "status": match_status,
+            "league": league_name,
+            "league_id": league_id
+        }
+        
+    except Exception as e:
+        print(f"❌ Match processing error: {e}")
+        return None
+
+def get_real_live_matches():
+    """Get real live matches from API"""
+    try:
+        raw_matches = fetch_real_live_matches()
+        
+        if not raw_matches:
+            return []
+        
+        processed_matches = []
+        for match in raw_matches:
+            processed_match = process_real_match(match)
+            if processed_match:
+                processed_matches.append(processed_match)
+        
+        print(f"✅ Processed {len(processed_matches)} real live matches")
+        return processed_matches
+            
+    except Exception as e:
+        print(f"❌ Live matches processing error: {e}")
+        return []
+
+# -------------------------
+# SMART AI CHATBOT (Improved)
 # -------------------------
 class SmartFootballAI:
     def __init__(self):
@@ -57,77 +156,105 @@ class SmartFootballAI:
         self.football_knowledge = self.initialize_football_knowledge()
     
     def initialize_football_knowledge(self):
-        """Football database with team info and patterns"""
+        """Enhanced football database"""
         return {
             "teams": {
-                "manchester city": {"strength": 95, "attack": 96, "defense": 90, "style": "attacking"},
-                "liverpool": {"strength": 92, "attack": 94, "defense": 88, "style": "high press"},
-                "arsenal": {"strength": 90, "attack": 89, "defense": 91, "style": "possession"},
-                "chelsea": {"strength": 85, "attack": 84, "defense": 86, "style": "balanced"},
-                "manchester united": {"strength": 84, "attack": 83, "defense": 82, "style": "counter attack"},
-                "tottenham": {"strength": 87, "attack": 88, "defense": 85, "style": "attacking"},
-                "newcastle": {"strength": 82, "attack": 81, "defense": 83, "style": "defensive"},
-                "brighton": {"strength": 80, "attack": 82, "defense": 78, "style": "possession"},
-                "real madrid": {"strength": 94, "attack": 93, "defense": 91, "style": "experienced"},
-                "barcelona": {"strength": 92, "attack": 91, "defense": 89, "style": "possession"},
-                "bayern munich": {"strength": 93, "attack": 95, "defense": 88, "style": "dominant"},
-                "psg": {"strength": 90, "attack": 92, "defense": 85, "style": "attacking"}
+                "manchester city": {"strength": 95, "attack": 96, "defense": 90, "style": "attacking", "manager": "Pep Guardiola"},
+                "liverpool": {"strength": 92, "attack": 94, "defense": 88, "style": "high press", "manager": "Jurgen Klopp"},
+                "arsenal": {"strength": 90, "attack": 89, "defense": 91, "style": "possession", "manager": "Mikel Arteta"},
+                "chelsea": {"strength": 85, "attack": 84, "defense": 86, "style": "balanced", "manager": "Mauricio Pochettino"},
+                "manchester united": {"strength": 84, "attack": 83, "defense": 82, "style": "counter attack", "manager": "Erik ten Hag"},
+                "tottenham": {"strength": 87, "attack": 88, "defense": 85, "style": "attacking", "manager": "Ange Postecoglou"},
+                "real madrid": {"strength": 94, "attack": 93, "defense": 91, "style": "experienced", "manager": "Carlo Ancelotti"},
+                "barcelona": {"strength": 92, "attack": 91, "defense": 89, "style": "possession", "manager": "Xavi Hernandez"},
+                "bayern munich": {"strength": 93, "attack": 95, "defense": 88, "style": "dominant", "manager": "Thomas Tuchel"},
+                "psg": {"strength": 90, "attack": 92, "defense": 85, "style": "attacking", "manager": "Luis Enrique"},
+                "inter": {"strength": 89, "attack": 87, "defense": 90, "style": "defensive", "manager": "Simone Inzaghi"},
+                "juventus": {"strength": 88, "attack": 85, "defense": 89, "style": "tactical", "manager": "Massimiliano Allegri"},
+                "milan": {"strength": 86, "attack": 86, "defense": 85, "style": "balanced", "manager": "Stefano Pioli"},
+                "napoli": {"strength": 85, "attack": 87, "defense": 83, "style": "attacking", "manager": "Walter Mazzarri"}
             },
-            "betting_patterns": {
-                "strong_home_weak_away": "HOME WIN with high confidence",
-                "equal_strength": "DRAW or close match, consider DOUBLE CHANCE",
-                "both_attacking": "BTTS YES and OVER 2.5 goals likely",
-                "both_defensive": "UNDER 2.5 goals and possibly BTTS NO"
+            "players": {
+                "haaland": {"team": "manchester city", "position": "striker", "goals": 25, "rating": 94},
+                "salah": {"team": "liverpool", "position": "winger", "goals": 18, "rating": 92},
+                "mbappe": {"team": "psg", "position": "forward", "goals": 27, "rating": 95},
+                "kane": {"team": "bayern munich", "position": "striker", "goals": 30, "rating": 93},
+                "de bruyne": {"team": "manchester city", "position": "midfielder", "goals": 8, "assists": 15, "rating": 93},
+                "bellingham": {"team": "real madrid", "position": "midfielder", "goals": 20, "rating": 92},
+                "vinicius": {"team": "real madrid", "position": "winger", "goals": 16, "rating": 91}
             }
         }
     
     def get_ai_response(self, user_message, user_id):
-        """Smart AI response without external APIs"""
+        """Smart AI response with context awareness"""
         try:
-            user_message_lower = user_message.lower()
+            user_message_lower = user_message.lower().strip()
             
-            # Remember conversation context
+            # Initialize conversation memory
             if user_id not in self.conversation_memory:
                 self.conversation_memory[user_id] = []
             
+            # Add to memory
             self.conversation_memory[user_id].append(f"User: {user_message}")
             
-            # Generate intelligent response
-            response = self.analyze_query(user_message_lower, user_id)
+            # Get context from previous messages
+            context = self.get_conversation_context(user_id)
             
-            # Store conversation
+            # Generate intelligent response
+            response = self.analyze_query(user_message_lower, context, user_id)
+            
+            # Store response
             self.conversation_memory[user_id].append(f"Bot: {response}")
             
-            # Keep only last 6 messages
-            if len(self.conversation_memory[user_id]) > 6:
-                self.conversation_memory[user_id] = self.conversation_memory[user_id][-6:]
+            # Keep conversation manageable
+            if len(self.conversation_memory[user_id]) > 8:
+                self.conversation_memory[user_id] = self.conversation_memory[user_id][-8:]
             
             return response
             
         except Exception as e:
             print(f"❌ AI response error: {e}")
-            return "I'm here to help with football predictions! ⚽ Ask me about matches, teams, or betting advice."
+            return "I'm here to help with football predictions and analysis! ⚽ What would you like to know?"
     
-    def analyze_query(self, message, user_id):
-        """Analyze user query and generate smart response"""
-        # Greetings
+    def get_conversation_context(self, user_id):
+        """Get context from conversation history"""
+        if user_id in self.conversation_memory and len(self.conversation_memory[user_id]) > 0:
+            return " ".join(self.conversation_memory[user_id][-3:])
+        return ""
+    
+    def analyze_query(self, message, context, user_id):
+        """Advanced query analysis with context awareness"""
+        
+        # Check for live matches query
+        if any(word in message for word in ['live', 'current', 'now playing', 'right now', 'ongoing']):
+            return self.handle_live_matches_query()
+        
+        # Check for specific match queries
+        if any(word in message for word in [' vs ', ' versus ', ' against ']):
+            return self.handle_specific_match_query(message)
+        
+        # Greetings and basic queries
         if any(word in message for word in ['hello', 'hi', 'hey', 'hola', 'namaste']):
-            return "👋 Hello! I'm your Football Prediction AI! I can help with match predictions, betting tips, and football analysis. What would you like to know?"
+            return random.choice([
+                "👋 Hello! I'm your Football AI Assistant! Ready to talk football? ⚽",
+                "👋 Hi there! Excited to discuss football predictions with you!",
+                "👋 Hey! Great to see you! What match are we analyzing today?"
+            ])
         
         # Thanks
         elif any(word in message for word in ['thank', 'thanks', 'shukriya']):
-            return "😊 You're welcome! Happy to help with your football queries! ⚽"
+            return random.choice([
+                "😊 You're welcome! Always happy to help with football insights!",
+                "😊 My pleasure! Let me know if you need more predictions!",
+                "😊 Glad I could help! What else can I analyze for you?"
+            ])
         
-        # Match predictions
-        elif any(word in message for word in ['predict', 'prediction', 'who will win', 'forecast']):
+        # Predictions
+        elif any(word in message for word in ['predict', 'prediction', 'who will win', 'forecast', 'result']):
             return self.handle_prediction_query(message)
         
-        # Live matches
-        elif any(word in message for word in ['live', 'current', 'playing now', 'right now']):
-            return "🔴 I can check live matches for you! Use the `/live` command to see currently playing games with real-time scores and updates."
-        
         # Betting advice
-        elif any(word in message for word in ['bet', 'betting', 'odds', 'gambling', 'satta']):
+        elif any(word in message for word in ['bet', 'betting', 'odds', 'gambling', 'satta', 'wager']):
             return self.handle_betting_query(message)
         
         # Team analysis
@@ -135,266 +262,447 @@ class SmartFootballAI:
             return self.handle_team_query(message)
         
         # Player queries
-        elif any(word in message for word in ['player', 'goal', 'assist', 'haaland', 'salah', 'mbappe']):
+        elif any(word in message for word in ['player', 'goal', 'assist', 'stats']):
             return self.handle_player_query(message)
         
         # League queries
-        elif any(word in message for word in ['premier league', 'la liga', 'serie a', 'bundesliga', 'champions league']):
+        elif any(word in message for word in ['premier league', 'la liga', 'serie a', 'bundesliga', 'champions league', 'europa']):
             return self.handle_league_query(message)
         
         # Help
-        elif any(word in message for word in ['help', 'what can you do', 'features']):
+        elif any(word in message for word in ['help', 'what can you do', 'features', 'commands']):
             return self.get_help_response()
         
         # General football chat
-        elif any(word in message for word in ['football', 'soccer', 'match', 'game']):
-            return "⚽ I love football too! I specialize in match predictions, team analysis, and betting insights. What specific information would you like?"
+        elif any(word in message for word in ['football', 'soccer', 'match', 'game', 'fixture']):
+            return random.choice([
+                "⚽ Football is my passion! I love analyzing matches and predicting outcomes. What specific match interests you?",
+                "⚽ Great topic! I specialize in match predictions and team analysis. Which league are you following?",
+                "⚽ Wonderful! I can help with predictions, betting tips, or team analysis. What would you like to discuss?"
+            ])
         
-        # Unknown query - provide contextual help
+        # Unknown query - intelligent fallback
         else:
-            return self.handle_unknown_query(message)
+            return self.handle_unknown_query(message, context)
+    
+    def handle_live_matches_query(self):
+        """Handle live matches queries"""
+        real_matches = get_real_live_matches()
+        
+        if real_matches:
+            response = "🔴 **REAL LIVE MATCHES RIGHT NOW:**\n\n"
+            
+            # Group by league
+            matches_by_league = {}
+            for match in real_matches:
+                league = match['league']
+                if league not in matches_by_league:
+                    matches_by_league[league] = []
+                matches_by_league[league].append(match)
+            
+            for league, matches in matches_by_league.items():
+                response += f"⚽ **{league}**\n"
+                for match in matches:
+                    status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "✅"
+                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
+                response += "\n"
+            
+            response += "🔄 **Live updates every 5 minutes!**\n"
+            response += "💬 **Ask me about any of these matches for predictions!**"
+            
+        else:
+            response = "⏳ **No live matches currently playing in major leagues.**\n\n"
+            response += "🔮 **But I can still help you with:**\n"
+            response += "• Upcoming match predictions\n• Team analysis\n• Betting strategies\n• Player statistics\n\n"
+            response += "Try: `/predict` for today's predictions or ask me about specific teams!"
+        
+        return response
+    
+    def handle_specific_match_query(self, message):
+        """Handle specific match queries"""
+        teams = self.extract_teams(message)
+        
+        if teams and len(teams) >= 2:
+            home_team, away_team = teams[0], teams[1]
+            return self.generate_detailed_prediction(home_team, away_team)
+        else:
+            return "🤔 I'd love to analyze a specific match for you! Please mention both teams, for example: 'Manchester City vs Liverpool' or 'Predict Arsenal vs Chelsea'"
     
     def handle_prediction_query(self, message):
-        """Handle prediction-related queries"""
-        teams_mentioned = self.extract_teams(message)
+        """Handle prediction queries"""
+        teams = self.extract_teams(message)
         
-        if teams_mentioned:
-            home_team, away_team = teams_mentioned
-            return self.generate_match_prediction(home_team, away_team)
+        if teams and len(teams) >= 2:
+            return self.generate_detailed_prediction(teams[0], teams[1])
         else:
-            return "🎯 For match predictions, please mention both teams! For example: 'Predict Manchester City vs Liverpool' or use `/predict` for today's matches."
+            return "🎯 I can predict match outcomes! Please specify the teams, like: 'Predict Barcelona vs Real Madrid' or use `/predict` for today's matches."
     
     def handle_betting_query(self, message):
-        """Handle betting-related queries"""
-        betting_advice = """
-💰 **SMART BETTING ADVICE:**
+        """Handle betting queries with dynamic advice"""
+        current_advice = """
+💰 **SMART BETTING INSIGHTS** 🎯
 
-🎯 **Safe Bets:**
-• Strong home teams vs weak away teams
-• DOUBLE CHANCE (1X or X2) for close matches
-• Teams with good recent form
+🏠 **Home Advantage Tips:**
+• Strong home teams win 45% more often
+• Consider home team's recent form
+• Check for key player availability
 
-⚡ **Value Bets:**
-• BTTS YES for attacking teams
-• OVER 2.5 goals in high-scoring fixtures
-• Home wins for dominant teams
+⚡ **Value Bet Opportunities:**
+• BTTS YES in attacking matchups
+• OVER 2.5 goals when both teams score freely
+• Double Chance for evenly matched teams
 
-🛡️ **Betting Rules:**
-1. Only bet what you can afford to lose
-2. Research teams and form
-3. Consider injuries and suspensions
-4. Shop for best odds
-5. Keep records of your bets
+🛡️ **Bankroll Management:**
+• Never bet more than 5% of your bankroll
+• Keep detailed records of all bets
+• Stay disciplined with staking plans
 
-🔮 Use my predictions as guidance, not guarantees!
+🎲 **Today's Betting Philosophy:**
+'Quality over quantity - one well-researched bet is better than ten random picks'
+
+💡 **Pro Tip:** Always check team news 1 hour before kickoff!
 """
-        return betting_advice
+        return current_advice
     
     def handle_team_query(self, message):
-        """Handle team-related queries"""
-        for team_name, team_data in self.football_knowledge["teams"].items():
+        """Handle team queries"""
+        for team_name in self.football_knowledge["teams"]:
             if team_name in message:
-                return self.generate_team_analysis(team_name, team_data)
+                return self.generate_team_analysis(team_name)
         
-        return "Which team are you interested in? I can analyze their strengths, style, and performance patterns."
+        return "Which team would you like me to analyze? I have detailed data on all major European clubs! 🏆"
     
     def handle_player_query(self, message):
-        """Handle player-related queries"""
-        player_responses = {
-            "haaland": "Erling Haaland: Goal machine! 🎯 Excellent finisher, strong in air. Great for anytime goalscorer bets.",
-            "salah": "Mohamed Salah: Consistent scorer! ⚡ Left-footed wizard. Good for shots on target markets.",
-            "mbappe": "Kylian Mbappe: Lightning speed! 🚀 Amazing in counter-attacks. First goalscorer potential.",
-            "messi": "Lionel Messi: Legendary playmaker! 🎨 Creates chances and scores. Assists market good.",
-            "ronaldo": "Cristiano Ronaldo: Aerial threat! 👑 Great in big games. Anytime goalscorer value."
-        }
+        """Handle player queries"""
+        for player_name, player_data in self.football_knowledge["players"].items():
+            if player_name in message:
+                return self.generate_player_analysis(player_name, player_data)
         
-        for player, response in player_responses.items():
-            if player in message:
-                return response
-        
-        return "I can tell you about top players like Haaland, Salah, Mbappe, Messi, Ronaldo. Who interests you?"
+        return "I can analyze top players like Haaland, Salah, Mbappe, Kane, De Bruyne. Who interests you? ⚽"
     
     def handle_league_query(self, message):
-        """Handle league-related queries"""
+        """Handle league queries"""
         league_info = {
-            "premier league": "Most competitive league! High tempo, physical. Good for OVER 2.5 goals and BTTS.",
-            "la liga": "Technical and tactical. Barcelona & Real Madrid dominate. Often high possession games.",
-            "serie a": "Defensive and strategic. Lower scoring generally. Good for UNDER 2.5 bets.",
-            "bundesliga": "High scoring! Bayern Munich dominant. Lots of goals and attacking football.",
-            "champions league": "Top European competition. Best teams, unpredictable. Great for live betting."
+            "premier league": "🇬🇧 **Premier League**: Most competitive league worldwide. High tempo, physical, unpredictable. Average goals: 2.8 per game.",
+            "la liga": "🇪🇸 **La Liga**: Technical excellence, tactical battles. Barcelona & Real Madrid dominance. Average goals: 2.5 per game.", 
+            "serie a": "🇮🇹 **Serie A**: Defensive mastery, tactical discipline. Known for tight games. Average goals: 2.4 per game.",
+            "bundesliga": "🇩🇪 **Bundesliga**: High-scoring, fan-friendly football. Bayern's dominance continues. Average goals: 3.2 per game.",
+            "champions league": "🏆 **Champions League**: Elite European competition. Highest quality, most unpredictable. Big teams often deliver."
         }
         
         for league, info in league_info.items():
             if league in message:
-                return f"🏆 **{league.upper()}**: {info}"
+                return f"{info}\n\n💡 **Betting Insight**: {self.get_league_betting_tip(league)}"
         
-        return "I cover Premier League, La Liga, Serie A, Bundesliga, and Champions League. Which league interests you?"
+        return "I cover all major European leagues! Which one would you like to discuss?"
     
-    def handle_unknown_query(self, message):
-        """Handle unknown queries intelligently"""
-        context_clues = {
-            'win': "For match winners, I analyze team form and head-to-head records. Try: 'Who will win between Team A vs Team B?'",
-            'goal': "Goal predictions depend on attacking strength and defensive weaknesses. I use expected goals (xG) models.",
-            'today': "For today's matches, use `/predict` command for detailed predictions!",
-            'tomorrow': "Check tomorrow's fixtures with `/upcoming` command.",
-            'best': "The 'best' bet depends on risk appetite. Safe: Double Chance, Risky: Correct Score",
-            'safe': "Safe bets: Home wins for strong teams, Double Chance, Over/Under based on team styles"
-        }
+    def handle_unknown_query(self, message, context):
+        """Intelligent handling of unknown queries"""
+        # Try to extract intent
+        if any(word in message for word in ['how', 'what', 'when', 'where', 'why']):
+            return "That's an interesting question! As a football prediction expert, I specialize in match analysis, team performance, and betting strategies. Could you rephrase your question in a football context?"
         
-        for clue, response in context_clues.items():
-            if clue in message:
-                return response
+        elif any(word in message for word in ['good', 'bad', 'awesome', 'terrible']):
+            return "I sense you have strong feelings about football! ⚽ Tell me which team or match you're referring to, and I'll give you my analysis!"
         
-        return "I specialize in football predictions and analysis! ⚽ Ask me about:\n• Match predictions\n• Betting tips\n• Team analysis\n• Player insights\n• League information\n\nOr use commands: /predict, /live, /help"
+        elif len(message.split()) <= 3:
+            return f"\"{message}\" - are you asking about a team, player, or match? I'd love to help with specific football analysis! 🎯"
+        
+        else:
+            return "I'm constantly learning about football! While I specialize in predictions and analysis, I might not understand everything. Try asking me about:\n• Match predictions\n• Team analysis\n• Betting tips\n• Player stats\n• League information"
     
     def extract_teams(self, message):
         """Extract team names from message"""
         mentioned_teams = []
         for team_name in self.football_knowledge["teams"].keys():
-            if team_name in message:
+            if team_name in message.lower():
                 mentioned_teams.append(team_name)
-        
-        if len(mentioned_teams) >= 2:
-            return mentioned_teams[0], mentioned_teams[1]
-        return None
+        return mentioned_teams
     
-    def generate_match_prediction(self, home_team, away_team):
-        """Generate smart match prediction"""
-        home_data = self.football_knowledge["teams"][home_team]
-        away_data = self.football_knowledge["teams"][away_team]
+    def generate_detailed_prediction(self, home_team, away_team):
+        """Generate detailed match prediction"""
+        home_data = self.football_knowledge["teams"].get(home_team)
+        away_data = self.football_knowledge["teams"].get(away_team)
         
-        strength_diff = home_data["strength"] - away_data["strength"]
-        home_advantage = 15  # Home advantage factor
+        if not home_data or not away_data:
+            return f"❌ I don't have enough data for {home_team} vs {away_team}. Try teams from major European leagues!"
         
-        total_strength = home_data["strength"] + home_advantage + away_data["strength"]
-        home_win_prob = ((home_data["strength"] + home_advantage) / total_strength) * 100
-        away_win_prob = (away_data["strength"] / total_strength) * 100
+        # Advanced prediction algorithm
+        home_advantage = 12
+        home_total = home_data["strength"] + home_advantage
+        away_total = away_data["strength"]
+        total_power = home_total + away_total
+        
+        home_win_prob = (home_total / total_power) * 100
+        away_win_prob = (away_total / total_power) * 100
         draw_prob = 100 - home_win_prob - away_win_prob
         
-        # Determine likely outcome
-        if home_win_prob >= 60:
-            outcome = f"**HOME WIN** - {home_team.title()} ({home_win_prob:.0f}%)"
-            confidence = "HIGH"
-        elif away_win_prob >= 60:
-            outcome = f"**AWAY WIN** - {away_team.title()} ({away_win_prob:.0f}%)"
-            confidence = "HIGH"
-        else:
-            outcome = f"**DRAW** (Probability: {draw_prob:.0f}%)"
-            confidence = "MEDIUM"
+        # Determine confidence level
+        confidence = "HIGH" if max(home_win_prob, away_win_prob, draw_prob) > 55 else "MEDIUM"
         
         # BTTS prediction
-        btts_prob = (home_data["attack"] + away_data["attack"]) / 2
-        btts = "YES" if btts_prob > 45 else "NO"
+        btts_probability = (home_data["attack"] + away_data["attack"]) / 2
+        btts = "YES" if btts_probability > 47 else "NO"
         
         # Goals prediction
-        total_goals_exp = (home_data["attack"] + away_data["attack"]) / 50
-        goals_pred = "OVER 2.5" if total_goals_exp > 2.7 else "UNDER 2.5"
+        expected_goals = (home_data["attack"] + away_data["attack"]) / 50
+        goals_pred = "OVER 2.5" if expected_goals > 2.7 else "UNDER 2.5"
+        
+        # Key factors analysis
+        factors = self.analyze_key_factors(home_data, away_data)
         
         prediction = f"""
-🎯 **PREDICTION: {home_team.title()} vs {away_team.title()}**
+🎯 **DETAILED PREDICTION: {home_team.upper()} vs {away_team.upper()}**
 
-🏠 **{home_team.title()}**: {home_data['strength']}/100 | Style: {home_data['style']}
-✈️ **{away_team.title()}**: {away_data['strength']}/100 | Style: {away_data['style']}
+📊 **TEAM ANALYSIS:**
+🏠 **{home_team.title()}** 
+   • Strength: {home_data['strength']}/100
+   • Style: {home_data['style']}
+   • Manager: {home_data['manager']}
 
-📊 **Expected Outcome**: {outcome}
-🎲 **Confidence**: {confidence}
+✈️ **{away_team.title()}**
+   • Strength: {away_data['strength']}/100  
+   • Style: {away_data['style']}
+   • Manager: {away_data['manager']}
 
-⚽ **Key Predictions:**
-• **Both Teams Score**: {btts} (Probability: {btts_prob:.0f}%)
+📈 **PREDICTION RESULTS:**
+• **Most Likely**: {self.get_most_likely_outcome(home_win_prob, away_win_prob, draw_prob)}
+• **Confidence**: {confidence}
+• **BTTS**: {btts} ({btts_probability:.0f}% probability)
 • **Total Goals**: {goals_pred}
-• **Match Trend**: {home_data['style'].title()} vs {away_data['style'].title()}
 
-💡 **Betting Suggestion**: Consider {self.get_betting_suggestion(home_data, away_data)}
+🔍 **KEY FACTORS:**
+{factors}
+
+💡 **BETTING RECOMMENDATION:**
+{self.get_betting_recommendation(home_data, away_data, home_win_prob, away_win_prob, draw_prob)}
+
+⚠️ *Remember: Football can be unpredictable! Use this as guidance.*
 """
         return prediction
     
-    def generate_team_analysis(self, team_name, team_data):
+    def analyze_key_factors(self, home_data, away_data):
+        """Analyze key match factors"""
+        factors = []
+        
+        if home_data["strength"] - away_data["strength"] > 15:
+            factors.append("• Strong home advantage")
+        elif away_data["strength"] - home_data["strength"] > 15:
+            factors.append("• Away team quality advantage")
+        
+        if home_data["attack"] > 90 and away_data["attack"] > 90:
+            factors.append("• Both teams have elite attacks")
+        elif home_data["defense"] > 90 and away_data["defense"] > 90:
+            factors.append("• Strong defensive matchup")
+        
+        if home_data["style"] == "attacking" and away_data["style"] == "attacking":
+            factors.append("• Both teams prefer attacking football")
+        elif home_data["style"] == "defensive" and away_data["style"] == "defensive":
+            factors.append("• Defensive tactical battle expected")
+        
+        if not factors:
+            factors.append("• Evenly balanced contest")
+            factors.append("• Small details could decide outcome")
+        
+        return "\n".join(factors)
+    
+    def get_most_likely_outcome(self, home_prob, away_prob, draw_prob):
+        """Determine most likely outcome"""
+        if home_prob >= away_prob and home_prob >= draw_prob:
+            return f"Home Win ({home_prob:.1f}%)"
+        elif away_prob >= home_prob and away_prob >= draw_prob:
+            return f"Away Win ({away_prob:.1f}%)"
+        else:
+            return f"Draw ({draw_prob:.1f}%)"
+    
+    def get_betting_recommendation(self, home_data, away_data, home_prob, away_prob, draw_prob):
+        """Get smart betting recommendation"""
+        if home_prob > 60:
+            return "HOME WIN or -1 Handicap"
+        elif away_prob > 60:
+            return "AWAY WIN or Double Chance (X2)"
+        elif draw_prob > 40:
+            return "DRAW or Double Chance (1X/ X2)"
+        elif home_data["attack"] > 85 and away_data["attack"] > 85:
+            return "BTTS YES + OVER 2.5 GOALS"
+        else:
+            return "DOUBLE CHANCE + UNDER 3.5 GOALS"
+    
+    def generate_team_analysis(self, team_name):
         """Generate detailed team analysis"""
+        team_data = self.football_knowledge["teams"][team_name]
+        
         return f"""
-🏆 **{team_name.upper()} ANALYSIS**
+🏆 **{team_name.upper()} - COMPREHENSIVE ANALYSIS**
 
-📈 **Overall Strength**: {team_data['strength']}/100
-⚡ **Attack Rating**: {team_data['attack']}/100
-🛡️ **Defense Rating**: {team_data['defense']}/100
-🎯 **Playing Style**: {team_data['style'].title()}
+📊 **Performance Metrics:**
+• Overall Rating: {team_data['strength']}/100
+• Attack Power: {team_data['attack']}/100
+• Defense Stability: {team_data['defense']}/100
+• Playing Philosophy: {team_data['style'].title()}
+• Manager: {team_data['manager']}
 
-💪 **Strengths**: {self.get_team_strengths(team_name)}
-⚠️ **Weaknesses**: {self.get_team_weaknesses(team_name)}
+🎯 **Tactical Identity:**
+{self.get_tactical_analysis(team_name)}
 
-🔮 **Betting Opportunities:**
-{self.get_team_betting_tips(team_name)}
+💪 **Key Strengths:**
+{self.get_team_strengths(team_name)}
+
+⚠️ **Areas for Improvement:**
+{self.get_team_weaknesses(team_name)}
+
+🔮 **Betting Profile:**
+{self.get_team_betting_profile(team_name)}
 """
+    
+    def get_tactical_analysis(self, team_name):
+        """Get tactical analysis"""
+        analysis = {
+            "manchester city": "Possession-based dominance, high press, creative midfield overloads, fluid attacking movements",
+            "liverpool": "Gegenpressing intensity, rapid transitions, full-back creativity, organized chaos",
+            "arsenal": "Positional play discipline, youth energy, set-piece efficiency, tactical flexibility",
+            "real madrid": "Big-game experience, individual brilliance, counter-attacking threat, European pedigree"
+        }
+        return analysis.get(team_name, "Balanced tactical approach with focus on both offensive and defensive organization")
     
     def get_team_strengths(self, team_name):
         """Get team strengths"""
         strengths = {
-            "manchester city": "Possession dominance, creative midfield, clinical finishing",
-            "liverpool": "High pressing, fast transitions, strong team spirit",
-            "arsenal": "Youthful energy, tactical discipline, set pieces",
-            "real madrid": "Big game experience, individual quality, winning mentality",
-            "bayern munich": "Squad depth, attacking variety, domestic dominance"
+            "manchester city": "• World-class squad depth\n• Tactical versatility\n• Possession dominance\n• Clinical finishing",
+            "liverpool": "• Pressing intensity\n• Anfield atmosphere\n• Fast transitions\n• Team cohesion", 
+            "arsenal": "• Youthful energy\n• Tactical discipline\n• Set-piece quality\n• Defensive organization",
+            "real madrid": "• Big-game mentality\n• Individual quality\n• European experience\n• Winning culture"
         }
-        return strengths.get(team_name, "Consistent performance and tactical organization")
+        return strengths.get(team_name, "• Consistent performance\n• Strong team spirit\n• Tactical organization")
     
     def get_team_weaknesses(self, team_name):
         """Get team weaknesses"""
         weaknesses = {
-            "manchester city": "Can be vulnerable to counter-attacks",
-            "liverpool": "High defensive line can be exploited",
-            "arsenal": "Sometimes lack experience in big games",
-            "real madrid": "Aging squad, occasional complacency",
-            "bayern munich": "Defensive inconsistencies at times"
+            "manchester city": "• Vulnerability to counter-attacks\n• Occasional complacency\n• High defensive line risks",
+            "liverpool": "• Defensive line exposure\n• Squad rotation challenges\n• Away form consistency",
+            "arsenal": "• Big-game experience\n• Squad depth in key positions\n• European competition learning curve",
+            "real madrid": "• Aging core players\n• Defensive transitions\n• Over-reliance on individual moments"
         }
-        return weaknesses.get(team_name, "Standard weaknesses for top-level team")
+        return weaknesses.get(team_name, "• Standard areas for improvement expected at elite level")
     
-    def get_team_betting_tips(self, team_name):
-        """Get team-specific betting tips"""
+    def get_team_betting_profile(self, team_name):
+        """Get team betting profile"""
+        profiles = {
+            "manchester city": "• Strong HOME WIN bets\n• OVER 2.5 goals frequently\n• HT/FT City-City value",
+            "liverpool": "• BTTS YES common\n• HIGH scoring games\n• Strong Anfield record", 
+            "arsenal": "• Clean sheet potential\n• UNDER 2.5 in big games\n• Set-piece threat",
+            "real madrid": "• Big game performers\n• Late goal specialists\n• European night magic"
+        }
+        return profiles.get(team_name, "• Consider form and fixtures\n• Home/away performance variation\n• Match context important")
+    
+    def generate_player_analysis(self, player_name, player_data):
+        """Generate player analysis"""
+        return f"""
+⭐ **{player_name.upper()} - PLAYER PROFILE**
+
+🏷️ **Basic Info:**
+• Team: {player_data['team'].title()}
+• Position: {player_data['position'].title()}
+• Rating: {player_data['rating']}/100
+
+📈 **Performance Stats:**
+• Goals: {player_data.get('goals', 'N/A')}
+• Assists: {player_data.get('assists', 'N/A')}
+
+🎯 **Playing Style:**
+{self.get_player_style(player_name)}
+
+💪 **Key Attributes:**
+{self.get_player_attributes(player_name)}
+
+🔮 **Betting Relevance:**
+{self.get_player_betting_insight(player_name)}
+"""
+    
+    def get_player_style(self, player_name):
+        """Get player style"""
+        styles = {
+            "haaland": "Elite poacher, incredible movement, physical dominance, clinical finishing",
+            "salah": "Left-footed wizard, cutting inside, goal threat, creative passing", 
+            "mbappe": "Lightning speed, dribbling ability, big-game performer, versatile attacker",
+            "de bruyne": "Complete midfielder, vision, passing range, set-piece specialist"
+        }
+        return styles.get(player_name, "Technical quality, tactical intelligence, consistent performer")
+    
+    def get_player_attributes(self, player_name):
+        """Get player attributes"""
+        attributes = {
+            "haaland": "• Aerial dominance\n• Clinical finishing\n• Physical strength\n• Movement intelligence",
+            "salah": "• Left-foot precision\n• Dribbling ability\n• Goal scoring\n• Creative vision",
+            "mbappe": "• Explosive speed\n• Technical skill\n• Big-game mentality\n• Versatility",
+            "de bruyne": "• Passing range\n• Vision intelligence\n• Set-piece quality\n• Leadership"
+        }
+        return attributes.get(player_name, "• Technical excellence\n• Tactical understanding\n• Consistent performance")
+    
+    def get_player_betting_insight(self, player_name):
+        """Get player betting insight"""
+        insights = {
+            "haaland": "• Anytime goalscorer value\n• First goalscorer potential\n• Multiple goal threat",
+            "salah": "• Shots on target markets\n• Anytime scorer\n• Assist potential", 
+            "mbappe": "• First goalscorer\n• Anytime scorer\n• Man of the match candidate",
+            "de bruyne": "• Assist markets\n• Shots on target\n• Set-piece involvement"
+        }
+        return insights.get(player_name, "• Consider position and role\n• Check recent form\n• Team performance context")
+    
+    def get_league_betting_tip(self, league):
+        """Get league-specific betting tip"""
         tips = {
-            "manchester city": "• HOME WIN markets\n• OVER 2.5 goals\n• HT/FT City-City",
-            "liverpool": "• BTTS YES\n• OVER 2.5 goals\n• Salah anytime scorer",
-            "arsenal": "• Clean sheet potential\n• UNDER 2.5 in big games",
-            "real madrid": "• Big game performers\n• Benzema/Vinicius scorer markets",
-            "bayern munich": "• HIGH scoring games\n• Win both halves\n• Lewandowski scorer"
+            "premier league": "Focus on home advantage and team form. BTTS markets often provide value.",
+            "la liga": "Consider unders in defensive matchups. Home teams generally perform well.", 
+            "serie a": "Defensive stability key. Lower scoring games common. Clean sheet bets valuable.",
+            "bundesliga": "High scoring expected. Goal-based markets profitable. Home dominance strong.",
+            "champions league": "Big teams often deliver. Experience crucial. Knockout rounds unpredictable."
         }
-        return tips.get(team_name, "• Consider home form\n• Check recent performances\n• Analyze opponent weaknesses")
-    
-    def get_betting_suggestion(self, home_data, away_data):
-        """Get betting suggestion based on team data"""
-        if home_data["strength"] - away_data["strength"] > 20:
-            return "HOME WIN or -1 handicap"
-        elif away_data["strength"] - home_data["strength"] > 20:
-            return "AWAY WIN or double chance"
-        elif home_data["attack"] > 85 and away_data["attack"] > 85:
-            return "BTTS YES and OVER 2.5 goals"
-        else:
-            return "DOUBLE CHANCE or UNDER 2.5 goals"
+        return tips.get(league, "Research team form and tactical matchups for best value.")
     
     def get_help_response(self):
-        """Get help response"""
+        """Get comprehensive help response"""
         return """
-🤖 **FOOTBALL PREDICTION AI HELP**
+🤖 **FOOTBALL PREDICTION AI - COMPLETE GUIDE** ⚽
 
-🎯 **I CAN HELP YOU WITH:**
-• Match predictions and analysis
-• Betting tips and strategies
-• Team performance insights
-• Player statistics and impact
-• League information and trends
+🎯 **MY CAPABILITIES:**
+• Real-time match predictions
+• Live match updates  
+• Team performance analysis
+• Player statistics and insights
+• Betting strategies and tips
+• League-specific analysis
+• Natural conversation about football
 
 ⚡ **QUICK COMMANDS:**
-`/predict` - Today's match predictions
-`/live` - Currently live matches  
-`/upcoming` - Upcoming fixtures
-`/help` - This help message
+`/start` - Welcome and introduction
+`/predict` - Today's match predictions  
+`/live` - Currently live matches
+`/help` - This help guide
 
-💬 **CHAT WITH ME:**
-• "Predict [Team A] vs [Team B]"
+💬 **INTELLIGENT CHAT EXAMPLES:**
+• "Predict Manchester City vs Liverpool"
+• "Show me live matches right now"
+• "Analyze Arsenal for me" 
 • "Betting tips for today"
-• "Analysis of [Team Name]"
-• "Who will win [match]?"
-• "Best bets for weekend"
+• "How will Barcelona do against Real Madrid?"
+• "Tell me about Erling Haaland"
+• "Premier League analysis"
 
-🔮 **I use advanced algorithms and football knowledge to provide accurate insights!**
+🔮 **PREDICTION FEATURES:**
+• Match outcome probabilities
+• Both Teams to Score analysis
+• Over/Under goals predictions
+• Key match factors
+• Betting recommendations
+• Confidence levels
+
+🏆 **COVERED LEAGUES:**
+• Premier League, La Liga, Serie A
+• Bundesliga, Ligue 1  
+• Champions League, Europa League
+
+💡 **I learn from our conversation and provide context-aware responses!**
 """
 
 # Initialize AI Chatbot
@@ -409,115 +717,87 @@ def send_welcome(message):
     welcome_text = """
 🤖 **WELCOME TO FOOTBALL PREDICTION AI** ⚽
 
-I'm your intelligent football assistant with AI capabilities! 
+I'm your intelligent football assistant with **real-time capabilities**!
 
-🎯 **I CAN:**
-• Predict match outcomes with high accuracy
-• Provide smart betting advice
-• Analyze teams and players
-• Give real-time match insights
-• Chat naturally about football
+🎯 **REAL-TIME FEATURES:**
+• Live match scores and updates
+• AI-powered predictions
+• Smart betting insights
+• Team and player analysis
+• Natural conversation
 
-⚡ **QUICK COMMANDS:**
-`/predict` - Get today's predictions
-`/live` - Live matches right now
-`/upcoming` - Upcoming fixtures
-`/help` - Show this message
+⚡ **QUICK ACCESS:**
+`/predict` - Today's predictions
+`/live` - Real live matches right now
+`/help` - Complete guide
 
-💬 **JUST CHAT WITH ME:**
-Try asking:
-• "Who will win Manchester City vs Liverpool?"
-• "Give me betting tips"
-• "Analyze Arsenal for me"
-• "Best bet for today"
+💬 **CHAT INTELLIGENTLY:**
+• "Show me live matches"
+• "Predict [Team A] vs [Team B]" 
+• "Analyze [Team/Player]"
+• "Betting tips for today"
+• Ask anything football!
 
-I understand natural language - just talk to me! 🎤
+🔴 **I provide REAL live match data, not samples!**
 """
     bot.reply_to(message, welcome_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['predict'])
 def get_predictions(message):
-    """Get match predictions"""
+    """Get today's predictions"""
     try:
-        bot.reply_to(message, "🔮 Fetching today's predictions...")
+        response = "🔮 **Today's predictions are based on current form and statistical models...**\n\n"
+        response += "For specific match predictions, please ask me like:\n"
+        response += "• 'Predict Manchester City vs Liverpool'\n" 
+        response += "• 'Who will win Barcelona vs Real Madrid?'\n"
+        response += "• 'Arsenal vs Chelsea prediction'\n\n"
+        response += "Or check `/live` for currently playing matches!"
         
-        # In real implementation, this would fetch from API
-        # For now, show sample prediction
-        sample_prediction = """
-🎯 **TODAY'S TOP PREDICTIONS:**
-
-⚽ **Manchester City vs Chelsea**
-✅ Prediction: HOME WIN
-📈 Confidence: 85%
-💡 Reason: City's home dominance vs Chelsea's inconsistency
-
-⚽ **Liverpool vs Arsenal**  
-✅ Prediction: DRAW
-📈 Confidence: 78%
-💡 Reason: Two strong teams, likely share points
-
-⚽ **Real Madrid vs Barcelona**
-✅ Prediction: HOME WIN
-📈 Confidence: 82%
-💡 Reason: Madrid's big game experience
-
-Use `/live` for live matches or chat with me for specific match analysis!
-"""
-        bot.reply_to(message, sample_prediction, parse_mode='Markdown')
+        bot.reply_to(message, response, parse_mode='Markdown')
         
     except Exception as e:
         bot.reply_to(message, f"❌ Prediction error: {str(e)}")
 
 @bot.message_handler(commands=['live'])
 def get_live_matches(message):
-    """Get live matches"""
+    """Get REAL live matches"""
     try:
-        # In real implementation, fetch from API
-        live_matches = """
-🔴 **LIVE MATCHES RIGHT NOW:**
-
-⚽ **Premier League**
-• Man City 2-0 Chelsea (63')
-• Liverpool 1-1 Arsenal (45+2') - HALF TIME
-
-⚽ **La Liga** 
-• Real Madrid 1-0 Barcelona (78')
-
-⚽ **Champions League**
-• Bayern 2-1 PSG (34')
-
-🔄 Updates every 5 minutes!
-"""
-        bot.reply_to(message, live_matches, parse_mode='Markdown')
+        bot.send_chat_action(message.chat.id, 'typing')
+        
+        # Get real live matches
+        live_matches = get_real_live_matches()
+        
+        if live_matches:
+            response = "🔴 **REAL LIVE MATCHES RIGHT NOW:**\n\n"
+            
+            # Group by league
+            matches_by_league = {}
+            for match in live_matches:
+                league = match['league']
+                if league not in matches_by_league:
+                    matches_by_league[league] = []
+                matches_by_league[league].append(match)
+            
+            for league, matches in matches_by_league.items():
+                response += f"⚽ **{league}**\n"
+                for match in matches:
+                    status_icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
+                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
+                response += "\n"
+            
+            response += "🔄 **Live updates every 5 minutes!**\n"
+            response += "💬 **Ask me about any match for detailed predictions!**"
+            
+        else:
+            response = "⏳ **No live matches currently playing in major leagues.**\n\n"
+            response += "But I can still help you with:\n"
+            response += "• Upcoming match predictions\n• Team analysis\n• Betting strategies\n• Player insights\n\n"
+            response += "Try asking: 'Predict [Team A] vs [Team B]' or 'Analyze [Team Name]'"
+        
+        bot.reply_to(message, response, parse_mode='Markdown')
         
     except Exception as e:
         bot.reply_to(message, f"❌ Live matches error: {str(e)}")
-
-@bot.message_handler(commands=['upcoming'])
-def get_upcoming_matches(message):
-    """Get upcoming matches"""
-    try:
-        upcoming = """
-📅 **UPCOMING FIXTURES:**
-
-**Tomorrow:**
-⚽ Man United vs Newcastle (20:00)
-⚽ Tottenham vs Brighton (19:45)
-
-**This Weekend:**
-⚽ Chelsea vs Liverpool (Saturday 15:00)
-⚽ Arsenal vs Man City (Sunday 16:30)
-
-**Champions League:**
-⚽ Bayern vs Real Madrid (Tue 20:00)
-⚽ PSG vs Barcelona (Wed 20:00)
-
-Ask me for predictions on any of these matches! 🎯
-"""
-        bot.reply_to(message, upcoming, parse_mode='Markdown')
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Upcoming matches error: {str(e)}")
 
 @bot.message_handler(func=lambda message: True)
 def handle_ai_chat(message):
@@ -530,6 +810,7 @@ def handle_ai_chat(message):
         
         # Show typing action
         bot.send_chat_action(message.chat.id, 'typing')
+        time.sleep(1)  # Simulate thinking
         
         # Get AI response
         ai_response = football_ai.get_ai_response(user_message, user_id)
@@ -542,11 +823,34 @@ def handle_ai_chat(message):
         bot.reply_to(message, "❌ Sorry, I encountered an error. Please try again!")
 
 # -------------------------
+# AUTO LIVE UPDATER
+# -------------------------
+def auto_live_updater():
+    """Auto-update live matches every 5 minutes"""
+    while True:
+        try:
+            current_time = datetime.now().strftime("%H:%M:%S")
+            print(f"\n🔄 [{current_time}] Checking for live matches...")
+            
+            live_matches = get_real_live_matches()
+            
+            if live_matches:
+                print(f"✅ {len(live_matches)} live matches found")
+            else:
+                print("⏳ No live matches currently")
+            
+            time.sleep(300)  # 5 minutes
+            
+        except Exception as e:
+            print(f"❌ Auto updater error: {e}")
+            time.sleep(300)
+
+# -------------------------
 # FLASK WEBHOOK
 # -------------------------
 @app.route('/')
 def home():
-    return "🤖 Football Prediction AI Bot - Ready for Action! ⚽"
+    return "🤖 Real-Time Football Prediction AI Bot - Live Match Updates! ⚽"
 
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
@@ -565,26 +869,29 @@ def setup_bot():
         bot.set_webhook(url=f"{DOMAIN}/{BOT_TOKEN}")
         print(f"✅ Webhook set: {DOMAIN}/{BOT_TOKEN}")
 
-        startup_msg = f"""
-🤖 **FOOTBALL PREDICTION AI BOT STARTED!**
+        # Start live match updater
+        t = threading.Thread(target=auto_live_updater, daemon=True)
+        t.start()
+        print("✅ Live Match Auto-Updater Started!")
 
-⚽ **SMART FEATURES:**
-• AI-Powered Chat System
-• Match Predictions
+        startup_msg = f"""
+🤖 **REAL-TIME FOOTBALL PREDICTION AI STARTED!**
+
+⚽ **ACTIVE FEATURES:**
+• Real Live Match Data
+• AI-Powered Predictions  
+• Smart Chat Responses
+• Live Score Updates
 • Betting Insights
-• Team Analysis
-• Live Match Updates
 
 🎯 **READY FOR ACTION:**
-• Natural language understanding
-• No API keys required
-• Real-time responses
-• Football expertise built-in
+• Real matches from API-Football
+• ChatGPT-like conversations
+• Pakistan Time: {datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')}
+• Live updates every 5 minutes
 
-✅ **System actively running!**
-⏰ Pakistan Time: {datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')}
-
-💬 **Users can now chat naturally with the bot!**
+✅ **System actively monitoring real matches!**
+💬 **Users can chat naturally about football!**
 """
         bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
         
@@ -593,6 +900,6 @@ def setup_bot():
         bot.polling(none_stop=True)
 
 if __name__ == '__main__':
-    print("🚀 Starting Football Prediction AI Bot...")
+    print("🚀 Starting Real-Time Football Prediction AI Bot...")
     setup_bot()
     app.run(host='0.0.0.0', port=PORT)

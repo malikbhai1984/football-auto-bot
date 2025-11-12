@@ -41,6 +41,141 @@ print(f"🔗 Domain: {DOMAIN}")
 API_URL = "https://apiv3.apifootball.com"
 
 # -------------------------
+# AUTO LIMIT PROTECTOR SYSTEM
+# -------------------------
+class AutoLimitProtector:
+    def __init__(self):
+        self.daily_limit = 100  # Free plan daily limit
+        self.emergency_mode = False
+        self.protection_log = []
+        self.last_warning_sent = None
+        
+    def check_api_health(self, current_usage):
+        """Check API usage and return protection level"""
+        remaining_calls = self.daily_limit - current_usage
+        
+        if current_usage >= 95:
+            level = "CRITICAL"
+            action = "STOP_UPDATES"
+            interval = 1800  # 30 minutes
+        elif current_usage >= 80:
+            level = "HIGH" 
+            action = "REDUCE_HEAVY"
+            interval = 600   # 10 minutes
+        elif current_usage >= 60:
+            level = "MEDIUM"
+            action = "REDUCE_MEDIUM"
+            interval = 300   # 5 minutes
+        elif current_usage >= 40:
+            level = "LOW"
+            action = "REDUCE_LIGHT" 
+            interval = 180   # 3 minutes
+        else:
+            level = "SAFE"
+            action = "NORMAL"
+            interval = 120   # 2 minutes
+            
+        return {
+            "level": level,
+            "action": action,
+            "interval": interval,
+            "remaining": remaining_calls,
+            "usage_percent": (current_usage / self.daily_limit) * 100
+        }
+    
+    def should_make_api_call(self, current_usage, call_type="auto"):
+        """Determine if API call should be made"""
+        if current_usage >= 100:
+            self.log_protection("BLOCKED", f"{call_type} call blocked - Daily limit reached")
+            return False
+            
+        if current_usage >= 95 and call_type == "auto":
+            self.log_protection("BLOCKED", f"Auto update blocked - Critical level")
+            return False
+            
+        return True
+    
+    def get_smart_interval(self, current_usage):
+        """Get smart interval based on usage"""
+        health = self.check_api_health(current_usage)
+        
+        # Add some randomness to avoid patterns
+        random_buffer = random.randint(10, 30)
+        final_interval = health["interval"] + random_buffer
+        
+        self.log_protection(health["level"], 
+                           f"Interval: {final_interval}s, Remaining: {health['remaining']}")
+        
+        return final_interval, health
+    
+    def log_protection(self, level, message):
+        """Log protection actions"""
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "level": level,
+            "message": message
+        }
+        self.protection_log.append(log_entry)
+        
+        # Keep only last 50 entries
+        if len(self.protection_log) > 50:
+            self.protection_log = self.protection_log[-50:]
+            
+        print(f"🛡️ [{level}] {message}")
+    
+    def send_warning_alert(self, health, current_usage, bot_instance):
+        """Send warning alerts to owner"""
+        try:
+            if self.last_warning_sent and (datetime.now() - self.last_warning_sent).total_seconds() < 3600:
+                return  # Don't spam warnings
+                
+            if health["level"] in ["CRITICAL", "HIGH"]:
+                warning_msg = f"""
+🚨 **API LIMIT ALERT**
+
+📊 **Current Usage:** {current_usage}/{self.daily_limit}
+📈 **Usage Percentage:** {health['usage_percent']:.1f}%
+🛡️ **Protection Level:** {health['level']}
+⏱️ **Update Interval:** {health['interval']} seconds
+🔄 **Action Taken:** {health['action']}
+
+💡 **Recommendation:** {'STOP BOT until reset' if health['level'] == 'CRITICAL' else 'Reduced update frequency'}
+"""
+                bot_instance.send_message(OWNER_CHAT_ID, warning_msg, parse_mode='Markdown')
+                self.last_warning_sent = datetime.now()
+                
+        except Exception as e:
+            print(f"❌ Warning alert error: {e}")
+    
+    def get_protection_status(self):
+        """Get protection system status"""
+        if not self.protection_log:
+            return "🟢 Protection System: No actions taken yet"
+        
+        recent_actions = self.protection_log[-5:]  # Last 5 actions
+        actions_text = "\n".join([f"• {action['timestamp'][11:19]} - {action['level']}: {action['message']}" 
+                                for action in recent_actions])
+        
+        return f"""
+🛡️ **AUTO LIMIT PROTECTOR STATUS**
+
+📊 **Recent Actions:**
+{actions_text}
+
+🎯 **Protection Levels:**
+• 🟢 SAFE (0-39%) - 2-3 minute updates
+• 🟡 LOW (40-59%) - 3-5 minute updates  
+• 🟠 MEDIUM (60-79%) - 5-10 minute updates
+• 🔴 HIGH (80-94%) - 10-30 minute updates
+• 🚨 CRITICAL (95%+) - Stop auto updates
+
+💾 **Daily Limit:** {self.daily_limit} calls
+"""
+
+# Initialize Auto Limit Protector
+limit_protector = AutoLimitProtector()
+
+# -------------------------
 # SMART API CACHING SYSTEM
 # -------------------------
 class APICache:
@@ -122,8 +257,11 @@ class APICache:
                 self.stats["last_reset"] = now.isoformat()
                 self.save_stats()
                 print("🔄 Daily API counter reset")
+                return True
+            return False
         except Exception as e:
             print(f"❌ Daily counter reset error: {e}")
+            return False
     
     def is_cache_valid(self, cache_key):
         """Check if cache is still valid"""
@@ -174,29 +312,41 @@ class APICache:
         self.stats["daily_calls"] += 1
         self.save_stats()
         
-        print(f"📊 API Call #{self.stats['total_api_calls']} (Today: {self.stats['daily_calls']}/100)")
+        # Check protection system
+        health = limit_protector.check_api_health(self.stats["daily_calls"])
         
-        # Warn if approaching daily limit
-        if self.stats["daily_calls"] >= 90:
-            print("🚨 WARNING: Approaching daily API limit!")
+        print(f"📊 API Call #{self.stats['total_api_calls']} (Today: {self.stats['daily_calls']}/{limit_protector.daily_limit})")
+        print(f"🛡️ Protection Level: {health['level']}")
+        
+        # Send warning if needed
+        if health["level"] in ["HIGH", "CRITICAL"]:
+            limit_protector.send_warning_alert(health, self.stats["daily_calls"], bot)
     
     def get_cache_stats(self):
         """Get cache statistics"""
         total_requests = self.stats["cache_hits"] + self.stats["cache_misses"]
         hit_rate = (self.stats["cache_hits"] / total_requests * 100) if total_requests > 0 else 0
         
+        health = limit_protector.check_api_health(self.stats["daily_calls"])
+        
         return f"""
-📊 **CACHE STATISTICS**
+📊 **CACHE & PROTECTION STATISTICS**
 
 🔢 **API Usage:**
 • Total API Calls: {self.stats['total_api_calls']}
-• Today's Calls: {self.stats['daily_calls']}/100
-• Remaining Today: {100 - self.stats['daily_calls']}
+• Today's Calls: {self.stats['daily_calls']}/{limit_protector.daily_limit}
+• Remaining Today: {limit_protector.daily_limit - self.stats['daily_calls']}
+• Usage Percentage: {health['usage_percent']:.1f}%
 
 💾 **Cache Performance:**
 • Cache Hits: {self.stats['cache_hits']}
 • Cache Misses: {self.stats['cache_misses']}
 • Hit Rate: {hit_rate:.1f}%
+
+🛡️ **Protection System:**
+• Current Level: {health['level']}
+• Update Interval: {health['interval']}s
+• Action: {health['action']}
 
 ⏱️ **Cache Duration:** {self.cache_duration} seconds
 """
@@ -227,6 +377,12 @@ def fetch_real_live_matches():
     cached_data = api_cache.get_cached_data("live_matches")
     if cached_data is not None:
         return cached_data
+    
+    # Check if API call should be made (protection system)
+    if not limit_protector.should_make_api_call(api_cache.stats["daily_calls"], "auto"):
+        print("🛡️ API call blocked by protection system")
+        stale_cache = api_cache.cache.get("live_matches", {}).get("data", [])
+        return stale_cache
     
     # If no cache, make API call
     try:
@@ -391,7 +547,7 @@ def get_real_live_matches():
     return []
 
 # -------------------------
-# ENHANCED AI CHATBOT WITH CACHE AWARENESS
+# ENHANCED AI CHATBOT WITH CACHE & PROTECTION AWARENESS
 # -------------------------
 class SmartFootballAI:
     def __init__(self):
@@ -413,7 +569,7 @@ class SmartFootballAI:
         }
     
     def get_ai_response(self, user_message, user_id):
-        """AI response with cache awareness"""
+        """AI response with cache and protection awareness"""
         user_message_lower = user_message.lower()
         
         if any(word in user_message_lower for word in ['live', 'current', 'now playing']):
@@ -425,30 +581,30 @@ class SmartFootballAI:
         elif any(word in user_message_lower for word in ['cache', 'statistics', 'stats', 'api']):
             return api_cache.get_cache_stats()
         
+        elif any(word in user_message_lower for word in ['protection', 'limit', 'quota']):
+            return limit_protector.get_protection_status()
+        
         elif any(word in user_message_lower for word in ['hello', 'hi', 'hey']):
-            return "👋 Hello! I'm Football Prediction AI with SMART CACHING! ⚽\n\nAsk me about live matches, predictions, or cache statistics!"
+            return "👋 Hello! I'm Football Prediction AI with AUTO LIMIT PROTECTION! ⚽\n\nAsk me about live matches, predictions, or protection status!"
         
         elif any(word in user_message_lower for word in ['help']):
             return self.get_help_response()
         
         else:
-            return "🤖 I can help with:\n• Live match updates (CACHED)\n• Match predictions\n• Cache statistics\n\nTry: 'Show me live matches' or 'cache stats'"
+            return "🤖 I can help with:\n• Live match updates (PROTECTED)\n• Match predictions\n• Cache statistics\n• API limit protection\n\nTry: 'Show me live matches' or 'protection status'"
 
     def handle_live_matches_query(self):
-        """Handle live matches queries with cache info"""
+        """Handle live matches queries with protection info"""
         real_matches = get_real_live_matches()
         
-        # Get cache info
-        cache_info = ""
-        if api_cache.is_cache_valid("live_matches"):
-            cache_time = datetime.fromisoformat(api_cache.cache["live_matches"]["timestamp"])
-            time_diff = (datetime.now() - cache_time).total_seconds()
-            cache_info = f"\n💾 *Cache: Fresh ({int(time_diff)}s ago)*"
-        else:
-            cache_info = f"\n💾 *Cache: Updated just now*"
+        # Get protection info
+        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
+        protection_icon = "🟢" if health["level"] == "SAFE" else "🟡" if health["level"] == "LOW" else "🟠" if health["level"] == "MEDIUM" else "🔴"
+        
+        protection_info = f"\n{protection_icon} *Protection: {health['level']} ({health['remaining']} calls left)*"
         
         if real_matches:
-            response = f"🔴 **LIVE MATCHES RIGHT NOW:**{cache_info}\n\n"
+            response = f"🔴 **LIVE MATCHES RIGHT NOW:**{protection_info}\n\n"
             
             # Group by league for better organization
             matches_by_league = {}
@@ -465,11 +621,11 @@ class SmartFootballAI:
                     response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
                 response += "\n"
             
-            response += f"🔄 Updates every 2 minutes (Cached)\n"
-            response += f"📊 API Calls Today: {api_cache.stats['daily_calls']}/100"
+            response += f"🔄 Updates: {health['interval']}s intervals\n"
+            response += f"📊 API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}"
             
         else:
-            response = f"⏳ No live matches in major leagues right now.{cache_info}\n\n"
+            response = f"⏳ No live matches in major leagues right now.{protection_info}\n\n"
             response += "Try asking for predictions instead!"
         
         return response
@@ -549,36 +705,46 @@ class SmartFootballAI:
 """
 
     def get_help_response(self):
+        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
+        
         return f"""
-🤖 **FOOTBALL PREDICTION BOT WITH SMART CACHING**
+🤖 **FOOTBALL PREDICTION BOT WITH AUTO LIMIT PROTECTION**
 
 ⚡ **COMMANDS:**
-/live - Get current live matches (CACHED)
+/live - Get current live matches (PROTECTED)
 /predict - Get match predictions  
 /stats - Cache & API statistics
+/protection - Protection system status
 /help - This help message
 
 💬 **CHAT EXAMPLES:**
 • "Show me live matches"
 • "Predict Manchester City vs Liverpool" 
 • "Cache statistics"
-• "How many API calls today?"
+• "Protection status"
+• "How many API calls left?"
 
 🎯 **FEATURES:**
-• Real-time live scores (2-min cache)
+• Real-time live scores (Smart caching)
 • AI match predictions
 • 7 major leagues coverage
-• Smart API rate limiting
-• Cache performance monitoring
+• Auto API limit protection
+• Smart rate limiting
+
+🛡️ **PROTECTION SYSTEM:**
+• Current Level: {health['level']}
+• API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}
+• Update Interval: {health['interval']} seconds
+• Remaining Calls: {health['remaining']}
 
 💾 **CACHE BENEFITS:**
 • Reduces API calls by 80%+
-• Faster response times
-• Avoids daily limits (100 calls)
+• Faster response times  
+• Avoids daily limits
 • Works offline with cached data
 
 📊 **Current Stats:**
-• API Calls Today: {api_cache.stats['daily_calls']}/100
+• API Calls Today: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}
 • Cache Hits: {api_cache.stats['cache_hits']}
 • Total Saved: {api_cache.stats['cache_hits']} calls
 """
@@ -594,23 +760,25 @@ def send_welcome(message):
     welcome_text = """
 🤖 **WELCOME TO FOOTBALL PREDICTION AI** ⚽
 
-🚀 **NOW WITH SMART CACHING TECHNOLOGY!**
+🚀 **NOW WITH AUTO LIMIT PROTECTION!**
 
 I provide:
-• 🔴 Real-time live matches (2-min cache)
+• 🔴 Real-time live matches (PROTECTED)
 • 🎯 AI-powered predictions  
 • 📊 7 major leagues coverage
-• 💾 Smart API rate limiting
+• 🛡️ Auto API limit protection
+• 💾 Smart caching system
 
 ⚡ **Quick Commands:**
-/live - Current live matches (CACHED)
+/live - Current live matches (PROTECTED)
 /predict - Match predictions
-/stats - Cache statistics  
+/stats - Cache & protection stats  
+/protection - Protection system status
 /help - Help guide
 
 💬 **Or just chat naturally!**
 
-💾 **Caching saves API calls & makes me faster!**
+🛡️ **Auto protection prevents hitting API limits!**
 """
     bot.reply_to(message, welcome_text, parse_mode='Markdown')
 
@@ -621,17 +789,14 @@ def get_live_matches(message):
         
         live_matches = get_real_live_matches()
         
-        # Get cache info
-        cache_info = ""
-        if api_cache.is_cache_valid("live_matches"):
-            cache_time = datetime.fromisoformat(api_cache.cache["live_matches"]["timestamp"])
-            time_diff = (datetime.now() - cache_time).total_seconds()
-            cache_info = f"\n💾 *Cache: Fresh ({int(time_diff)}s ago)*"
-        else:
-            cache_info = f"\n💾 *Cache: Updated just now*"
+        # Get protection info
+        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
+        protection_icon = "🟢" if health["level"] == "SAFE" else "🟡" if health["level"] == "LOW" else "🟠" if health["level"] == "MEDIUM" else "🔴"
+        
+        protection_info = f"\n{protection_icon} *Protection: {health['level']} ({health['remaining']} calls left)*"
         
         if live_matches:
-            response = f"🔴 **LIVE MATCHES RIGHT NOW:**{cache_info}\n\n"
+            response = f"🔴 **LIVE MATCHES RIGHT NOW:**{protection_info}\n\n"
             
             # Group by league for better organization
             matches_by_league = {}
@@ -648,11 +813,11 @@ def get_live_matches(message):
                     response += f"• {match['home_team']} {match['score']} {match['away_team']} {status_icon} {match['minute']}\n"
                 response += "\n"
             
-            response += f"🔄 Updates every 2 minutes (Cached)\n"
-            response += f"📊 API Calls Today: {api_cache.stats['daily_calls']}/100"
+            response += f"🔄 Updates: {health['interval']}s intervals\n"
+            response += f"📊 API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}"
             
         else:
-            response = f"⏳ **No live matches in major leagues right now.**{cache_info}\n\n"
+            response = f"⏳ **No live matches in major leagues right now.**{protection_info}\n\n"
             response += "Try the /predict command for upcoming match predictions!"
         
         bot.reply_to(message, response, parse_mode='Markdown')
@@ -686,6 +851,14 @@ def get_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Stats error: {str(e)}")
 
+@bot.message_handler(commands=['protection', 'limit'])
+def get_protection(message):
+    try:
+        protection_text = limit_protector.get_protection_status()
+        bot.reply_to(message, protection_text, parse_mode='Markdown')
+    except Exception as e:
+        bot.reply_to(message, f"❌ Protection status error: {str(e)}")
+
 @bot.message_handler(commands=['help'])
 def get_help(message):
     help_text = football_ai.get_help_response()
@@ -711,26 +884,30 @@ def handle_ai_chat(message):
         bot.reply_to(message, "❌ Sorry, error occurred. Please try again!")
 
 # -------------------------
-# SMART AUTO UPDATER WITH CACHE
+# SMART AUTO UPDATER WITH AUTO LIMIT PROTECTION
 # -------------------------
 def smart_auto_updater():
-    """Smart auto-updater that respects API limits"""
-    base_interval = 120  # 2 minutes base (matches cache duration)
+    """Smart auto-updater with automatic limit protection"""
     
     while True:
         try:
             current_time = datetime.now().strftime("%H:%M:%S")
-            print(f"\n🔄 [{current_time}] Smart cache update check...")
+            print(f"\n🔄 [{current_time}] Smart protection update check...")
             
-            # Check if we're approaching daily limit
-            if api_cache.stats["daily_calls"] >= 95:
-                print("🚨 DAILY LIMIT NEAR - Skipping API call")
-                time.sleep(300)  # Wait 5 minutes
+            # Get current usage
+            current_usage = api_cache.stats["daily_calls"]
+            
+            # Check if we should make API call
+            if not limit_protector.should_make_api_call(current_usage, "auto"):
+                # Get interval even when blocked (for waiting)
+                interval, health = limit_protector.get_smart_interval(current_usage)
+                print(f"🛡️ Auto-update blocked. Waiting {interval} seconds...")
+                time.sleep(interval)
                 continue
             
             # Only update if cache is expired
             if not api_cache.is_cache_valid("live_matches"):
-                print("💾 Cache expired, updating...")
+                print("💾 Cache expired, updating with protection...")
                 live_matches = get_real_live_matches()
                 
                 if live_matches:
@@ -740,27 +917,23 @@ def smart_auto_updater():
             else:
                 print("💾 Cache still fresh, skipping API call")
             
-            # Dynamic interval based on API usage
-            if api_cache.stats["daily_calls"] > 80:
-                interval = 300  # 5 minutes if high usage
-            elif api_cache.stats["daily_calls"] > 50:
-                interval = 240  # 4 minutes if medium usage
-            else:
-                interval = base_interval  # 2 minutes if low usage
+            # Get smart interval based on current usage
+            interval, health = limit_protector.get_smart_interval(current_usage)
             
-            print(f"⏰ Next update in {interval} seconds...")
+            print(f"⏰ Next update in {interval} seconds (Protection: {health['level']})...")
             time.sleep(interval)
             
         except Exception as e:
             print(f"❌ Auto updater error: {e}")
-            time.sleep(300)
+            time.sleep(300)  # Wait 5 minutes on error
 
 # -------------------------
 # FLASK WEBHOOK ROUTES (Only for webhook mode)
 # -------------------------
 @app.route('/')
 def home():
-    return "🤖 Football Prediction AI Bot - Live Match Updates with Caching! ⚽"
+    health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
+    return f"🤖 Football Prediction AI Bot - Live Match Updates with Auto Limit Protection! ⚽<br>API Usage: {api_cache.stats['daily_calls']}/100 | Protection: {health['level']}"
 
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
@@ -802,37 +975,45 @@ def start_polling():
 def start_bot():
     """Main bot starter"""
     try:
-        print("🚀 Starting Football Prediction Bot with SMART CACHING...")
+        print("🚀 Starting Football Prediction Bot with AUTO LIMIT PROTECTION...")
         
-        # Start smart auto-updater
+        # Start smart auto-updater with protection
         updater_thread = threading.Thread(target=smart_auto_updater, daemon=True)
         updater_thread.start()
-        print("✅ Smart Auto-Updater Started!")
+        print("✅ Smart Auto-Updater with Protection Started!")
         
         # Test system
-        print("🔍 Testing cache system...")
+        print("🔍 Testing protection system...")
         test_matches = get_real_live_matches()
         print(f"🔍 Initial cache load: {len(test_matches)} matches")
         
+        health = limit_protector.check_api_health(api_cache.stats["daily_calls"])
+        
         startup_msg = f"""
-🤖 **FOOTBALL PREDICTION AI WITH CACHING STARTED!**
+🤖 **FOOTBALL PREDICTION AI WITH AUTO LIMIT PROTECTION STARTED!**
 
-✅ **Advanced Features Active:**
-• Real-time match updates (CACHED)
+✅ **Advanced Protection Features Active:**
+• Real-time match updates (PROTECTED)
 • AI predictions
-• 7 major leagues  
-• Smart API rate limiting
-• 2-minute cache duration
+• 7 major leagues coverage  
+• Auto API limit protection
+• Smart rate limiting
+• Dynamic interval adjustment
+
+🛡️ **Protection System:**
+• Current Level: {health['level']}
+• API Usage: {api_cache.stats['daily_calls']}/{limit_protector.daily_limit}
+• Update Interval: {health['interval']}s
+• Remaining Calls: {health['remaining']}
 
 💾 **Cache System:**
 • API Calls Saved: {api_cache.stats['cache_hits']}
-• Today's Calls: {api_cache.stats['daily_calls']}/100
 • Cache Hit Rate: Calculating...
 
 🌐 **Mode:** {'WEBHOOK' if USE_WEBHOOK else 'POLLING'}
 🕒 **Pakistan Time:** {datetime.now(pytz.timezone('Asia/Karachi')).strftime('%Y-%m-%d %H:%M:%S')}
 
-💬 **Bot is ready with efficient caching!**
+🛡️ **Bot is fully protected against API limits!**
 """
         bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
         

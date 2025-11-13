@@ -54,17 +54,6 @@ TARGET_LEAGUES = {
     "5": "🌎 World Cup Qualifiers",
 }
 
-def test_bot_connection():
-    """Test if bot can connect to Telegram"""
-    try:
-        print("🔐 Testing bot connection...")
-        bot_info = bot.get_me()
-        print(f"✅ SUCCESS! Bot: @{bot_info.username}")
-        return True
-    except Exception as e:
-        print(f"❌ Bot connection failed: {e}")
-        return False
-
 def safe_api_call(url):
     """Safe API call with error handling"""
     global api_hits
@@ -122,6 +111,15 @@ def get_upcoming_matches():
     print(f"🔮 Found {len(upcoming_matches)} upcoming matches for predictions")
     return upcoming_matches
 
+def get_live_matches():
+    """Get live matches for today's date"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    url = f"{API_URL}/?action=get_events&from={today}&to={today}&APIkey={API_KEY}"
+    all_matches = safe_api_call(url)
+    live_matches = [m for m in all_matches if m.get('match_live') == "1" and str(m.get('league_id', '')) in TARGET_LEAGUES]
+    print(f"🔴 Found {len(live_matches)} live matches")
+    return live_matches
+
 def format_time(time_str):
     """Format time to 12-hour format"""
     if not time_str or ':' not in time_str:
@@ -146,20 +144,17 @@ def get_league_name(league_id):
 def predict_match_result(home_team, away_team, home_goals, away_goals):
     """Simple prediction algorithm based on team stats"""
     try:
-        # Simple prediction logic - you can enhance this
         home_attack = int(home_goals) if home_goals else 1
         away_attack = int(away_goals) if away_goals else 1
         
-        # Basic probability calculation
         total_attack = home_attack + away_attack
         if total_attack == 0:
-            return "1-1 Draw"  # Default prediction
+            return "1-1 Draw"
             
         home_win_prob = (home_attack / total_attack) * 100
         away_win_prob = (away_attack / total_attack) * 100
         draw_prob = 100 - abs(home_win_prob - away_win_prob)
         
-        # Make prediction
         if home_win_prob > 60:
             return f"2-1 Win for {home_team}"
         elif away_win_prob > 60:
@@ -167,10 +162,10 @@ def predict_match_result(home_team, away_team, home_goals, away_goals):
         elif draw_prob > 40:
             return "1-1 Draw"
         else:
-            return f"2-1 Win for {home_team}"  # Slight home advantage
+            return f"2-1 Win for {home_team}"
         
     except Exception as e:
-        return f"2-1 Win for {home_team}"  # Default prediction
+        return f"2-1 Win for {home_team}"
 
 def generate_predictions():
     """Generate predictions for upcoming matches"""
@@ -179,31 +174,30 @@ def generate_predictions():
     upcoming_matches = get_upcoming_matches()
     predictions = []
     
-    for match in upcoming_matches[:10]:  # Limit to 10 matches
+    for match in upcoming_matches[:10]:
         try:
             home_team = match.get('match_hometeam_name', 'Unknown').strip()
             away_team = match.get('match_awayteam_name', 'Unknown').strip()
             time_str = match.get('match_time', '')
             league_id = match.get('league_id', '')
             
-            # Skip if teams are unknown
             if home_team == 'Unknown' or away_team == 'Unknown':
                 continue
             
-            # Get league name
             league_name = get_league_name(league_id)
             
-            # Get team stats for better prediction (simplified)
             home_goals = match.get('match_hometeam_score', '0')
             away_goals = match.get('match_awayteam_score', '0')
             
-            # Generate prediction
             prediction = predict_match_result(home_team, away_team, home_goals, away_goals)
             formatted_time = format_time(time_str)
             
-            prediction_text = f"**{home_team} vs {away_team}**\n"
-            prediction_text += f"🕒 {formatted_time} | {league_name}\n"
-            prediction_text += f"🔮 **Prediction:** {prediction}\n"
+            prediction_text = f"**{home_team} vs {away_team}**
+"
+            prediction_text += f"🕒 {formatted_time} | {league_name}
+"
+            prediction_text += f"🔮 **Prediction:** {prediction}
+"
             prediction_text += "─" * 30
             
             predictions.append(prediction_text)
@@ -215,33 +209,74 @@ def generate_predictions():
     if not predictions:
         return "No upcoming matches found for predictions."
     
-    header = "🔮 **FOOTBALL MATCH PREDICTIONS** 🔮\n\n"
-    header += f"⏰ Generated: {datetime.now().strftime('%I:%M %p')}\n\n"
+    header = "🔮 **FOOTBALL MATCH PREDICTIONS** 🔮
+
+"
+    header += f"⏰ Generated: {datetime.now().strftime('%I:%M %p')}
+
+"
     
-    return header + "\n\n".join(predictions)
+    return header + "
+
+".join(predictions)
+
+def generate_live_predictions():
+    """Generate predictions for live matches"""
+    live_matches = get_live_matches()
+    if not live_matches:
+        return "No live matches currently for predictions."
+    
+    predictions = []
+    for match in live_matches:
+        home_team = match.get('match_hometeam_name', 'Unknown')
+        away_team = match.get('match_awayteam_name', 'Unknown')
+        home_goals = match.get('match_hometeam_score', '0')
+        away_goals = match.get('match_awayteam_score', '0')
+
+        prediction = predict_match_result(home_team, away_team, home_goals, away_goals)
+        league_name = get_league_name(match.get('league_id', ''))
+        time_str = format_time(match.get('match_time', ''))
+
+        pred_text = f"**{home_team} vs {away_team}**
+🕒 {time_str} | {league_name}
+🔮 **Prediction:** {prediction}
+{'─'*30}"
+        predictions.append(pred_text)
+
+    header = "🔴 **LIVE MATCH PREDICTIONS** 🔴
+
+"
+    header += f"⏰ Updated: {datetime.now().strftime('%I:%M %p')}
+
+"
+    return header + "
+
+".join(predictions)
 
 def send_auto_predictions():
     """Automatically send predictions to owner"""
     try:
-        print("🤖 Auto-sending predictions...")
+        print("🤖 Auto-sending upcoming predictions...")
         predictions = generate_predictions()
         bot.send_message(OWNER_CHAT_ID, predictions, parse_mode='Markdown')
-        print("✅ Predictions sent successfully")
+        print("✅ Upcoming predictions sent successfully")
+
+        print("🤖 Auto-sending live predictions...")
+        live_preds = generate_live_predictions()
+        bot.send_message(OWNER_CHAT_ID, live_preds, parse_mode='Markdown')
+        print("✅ Live predictions sent successfully")
     except Exception as e:
         print(f"❌ Failed to send auto-predictions: {e}")
 
 def setup_scheduler():
     """Setup automatic scheduling for predictions"""
-    # Schedule predictions every 7 minutes
     schedule.every(7).minutes.do(send_auto_predictions)
-    
-    # Also schedule every hour for variety
     schedule.every(1).hours.do(lambda: bot.send_message(
         OWNER_CHAT_ID, 
         f"🤖 Bot is running! API calls: {api_hits}", 
         parse_mode='Markdown'
     ))
-    
+
     print("⏰ Scheduler setup: Predictions every 7 minutes")
 
 def run_scheduler():
@@ -255,12 +290,11 @@ def run_scheduler():
             time.sleep(60)
 
 def format_matches(matches, match_type="all"):
-    """Format matches for display"""
     if not matches:
         return "No matches found today."
     
     output = []
-    match_count = 0
+    count = 0
     
     for match in matches:
         try:
@@ -271,36 +305,35 @@ def format_matches(matches, match_type="all"):
             status = str(match.get('match_status', ''))
             time_str = match.get('match_time', '')
             league_id = match.get('league_id', '')
-            
-            # Skip if teams are unknown
+
             if home_team == 'Unknown' and away_team == 'Unknown':
                 continue
             
-            # Get league name
             league_name = get_league_name(league_id)
             
-            # Filter by match type
             if match_type == "live" and not (status.isdigit() or status in ['HT', '1H', '2H']):
                 continue
             elif match_type == "upcoming" and (status.isdigit() or status in ['HT', 'FT', '1H', '2H']):
                 continue
-            
-            # Determine match status and format
+
             if status == 'HT':
-                display = f"🔄 **{home_team} {home_score}-{away_score} {away_team}**\n   ⏱️ Half Time | {league_name}"
+                display = f"🔄 **{home_team} {home_score}-{away_score} {away_team}**
+⏱️ Half Time | {league_name}"
             elif status == 'FT':
-                display = f"🏁 **{home_team} {home_score}-{away_score} {away_team}**\n   ⏱️ Full Time | {league_name}"
+                display = f"🏁 **{home_team} {home_score}-{away_score} {away_team}**
+⏱️ Full Time | {league_name}"
             elif status.isdigit():
-                display = f"🔴 **{home_team} {home_score}-{away_score} {away_team}**\n   ⏱️ {status}' | {league_name}"
+                display = f"🔴 **{home_team} {home_score}-{away_score} {away_team}**
+⏱️ {status}' | {league_name}"
             else:
                 formatted_time = format_time(time_str)
-                display = f"🕒 **{home_team} vs {away_team}**\n   ⏰ {formatted_time} | {league_name}"
-            
+                display = f"🕒 **{home_team} vs {away_team}**
+⏰ {formatted_time} | {league_name}"
+
             output.append(display)
-            match_count += 1
+            count += 1
             
-            # Limit to 15 matches to avoid long messages
-            if match_count >= 15:
+            if count >= 15:
                 break
                 
         except Exception as e:
@@ -310,244 +343,128 @@ def format_matches(matches, match_type="all"):
     if not output:
         return "No matches found for the selected type."
     
-    return "\n\n".join(output)
+    return "
 
-# Bot message handlers
+".join(output)
+
+# Telegram Commands
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    try:
-        welcome = """
+    welcome = """
 🤖 **Football Matches Bot** ⚽
 
-I can show you today's football matches with live scores and schedules!
-
-**Commands:**
+Commands:
 /today - Today's all matches
 /live - Live matches only  
 /upcoming - Upcoming matches
 /predict - Match predictions
 /stats - Bot statistics
 
-**Auto Features:**
-• Predictions every 7 minutes
-• Limited to 7 major leagues + World Cup
-
-**Just type:**
-"today matches"
-"live scores" 
-"upcoming games"
-"predictions"
-
-Let's get started! 🎯
+Type keywords like:
+"today", "live", "upcoming", "predict"
 """
-        bot.reply_to(message, welcome, parse_mode='Markdown')
-        print(f"✅ Sent welcome to {message.chat.id}")
-    except Exception as e:
-        print(f"Error in welcome: {e}")
+    bot.reply_to(message, welcome, parse_mode='Markdown')
 
 @bot.message_handler(commands=['today'])
 def send_today(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        matches = get_todays_matches()
-        
-        response = "📅 **Today's Football Matches**\n\n"
-        response += f"⏰ Last Updated: {datetime.now().strftime('%I:%M %p')}\n\n"
-        
-        formatted_matches = format_matches(matches, "all")
-        response += formatted_matches
-        
-        response += f"\n\n📊 **API calls today:** {api_hits}"
-        response += f"\n⚽ **Total matches:** {len(matches) if matches else 0}"
-        
-        bot.reply_to(message, response, parse_mode='Markdown')
-        print(f"✅ Sent today's matches to {message.chat.id}")
-        
-    except Exception as e:
-        error_msg = "❌ Error fetching today's matches. Please try again later."
-        bot.reply_to(message, error_msg)
-        print(f"Today error: {e}")
+    matches = get_todays_matches()
+    response = "📅 **Today's Football Matches**
+
+"
+    response += f"⏰ Updated: {datetime.now().strftime('%I:%M %p')}
+
+"
+    response += format_matches(matches, "all")
+    bot.reply_to(message, response, parse_mode='Markdown')
 
 @bot.message_handler(commands=['predict'])
 def send_predictions(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        predictions = generate_predictions()
-        bot.reply_to(message, predictions, parse_mode='Markdown')
-        print(f"✅ Sent predictions to {message.chat.id}")
-    except Exception as e:
-        error_msg = "❌ Error generating predictions. Please try again later."
-        bot.reply_to(message, error_msg)
-        print(f"Predict error: {e}")
+    predictions = generate_predictions()
+    bot.reply_to(message, predictions, parse_mode='Markdown')
 
 @bot.message_handler(commands=['live'])
 def send_live(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        matches = get_todays_matches()
-        
-        response = "🔴 **Live Football Matches**\n\n"
-        
-        formatted_matches = format_matches(matches, "live")
-        response += formatted_matches
-        
-        if "No matches" in formatted_matches:
-            response = "🔴 No live matches at the moment. Check /today for upcoming matches."
-        
-        response += f"\n\n📊 **API calls today:** {api_hits}"
-        
-        bot.reply_to(message, response, parse_mode='Markdown')
-        print(f"✅ Sent live matches to {message.chat.id}")
-        
-    except Exception as e:
-        error_msg = "❌ Error fetching live matches. Please try again later."
-        bot.reply_to(message, error_msg)
-        print(f"Live error: {e}")
+    matches = get_todays_matches()
+    response = "🔴 **Live Football Matches**
+
+"
+    response += format_matches(matches, "live")
+    bot.reply_to(message, response, parse_mode='Markdown')
 
 @bot.message_handler(commands=['upcoming'])
 def send_upcoming(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        matches = get_todays_matches()
-        
-        response = "🕒 **Upcoming Matches Today**\n\n"
-        
-        formatted_matches = format_matches(matches, "upcoming")
-        response += formatted_matches
-        
-        if "No matches" in formatted_matches:
-            response = "🕒 No upcoming matches found for today."
-        
-        response += f"\n\n📊 **API calls today:** {api_hits}"
-        
-        bot.reply_to(message, response, parse_mode='Markdown')
-        print(f"✅ Sent upcoming matches to {message.chat.id}")
-        
-    except Exception as e:
-        error_msg = "❌ Error fetching upcoming matches. Please try again later."
-        bot.reply_to(message, error_msg)
-        print(f"Upcoming error: {e}")
+    matches = get_todays_matches()
+    response = "🕒 **Upcoming Matches Today**
+
+"
+    response += format_matches(matches, "upcoming")
+    bot.reply_to(message, response, parse_mode='Markdown')
 
 @bot.message_handler(commands=['stats'])
 def send_stats(message):
-    try:
-        stats = f"""
+    stats = f"""
 📊 **Bot Statistics**
 
-• **API Calls Today:** {api_hits}
-• **Target Leagues:** {len(TARGET_LEAGUES)}
-• **Auto Predictions:** Every 7 minutes
-• **Current Time:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-• **Bot Status:** ✅ Running
-
-**Leagues Tracked:**
-{', '.join(TARGET_LEAGUES.values())}
-
-Everything is working perfectly! 🚀
+• API Calls Today: {api_hits}
+• Target Leagues: {len(TARGET_LEAGUES)}
+• Auto Predictions: Every 7 minutes
+• Time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+• Bot Status: ✅ Running
 """
-        bot.reply_to(message, stats, parse_mode='Markdown')
-        print(f"✅ Sent stats to {message.chat.id}")
-    except Exception as e:
-        print(f"Stats error: {e}")
+    bot.reply_to(message, stats, parse_mode='Markdown')
 
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    try:
-        text = message.text.lower()
-        
-        if any(word in text for word in ['today', 'matches', 'aaj', 'aj']):
-            send_today(message)
-        elif any(word in text for word in ['live', 'score']):
-            send_live(message)
-        elif any(word in text for word in ['upcoming', 'coming']):
-            send_upcoming(message)
-        elif any(word in text for word in ['predict', 'prediction']):
-            send_predictions(message)
-        elif any(word in text for word in ['stat', 'hit']):
-            send_stats(message)
-        elif any(word in text for word in ['hello', 'hi', 'hey']):
-            bot.reply_to(message, "👋 Hello! I'm Football Bot! Use /today to see matches!")
-        else:
-            send_welcome(message)
-            
-    except Exception as e:
-        error_msg = "❌ Error processing your message. Please try again."
-        bot.reply_to(message, error_msg)
-        print(f"Message handler error: {e}")
+@bot.message_handler(func=lambda m: True)
+def handle_text(message):
+    text = message.text.lower()
+    if any(word in text for word in ['today', 'matches', 'aaj', 'aj']):
+        send_today(message)
+    elif any(word in text for word in ['live', 'score']):
+        send_live(message)
+    elif any(word in text for word in ['upcoming', 'coming']):
+        send_upcoming(message)
+    elif any(word in text for word in ['predict', 'prediction']):
+        send_predictions(message)
+    elif any(word in text for word in ['stat', 'hit']):
+        send_stats(message)
+    elif any(word in text for word in ['hello', 'hi']):
+        bot.reply_to(message, "👋 Hello! Use /today to see football matches!")
+    else:
+        send_welcome(message)
 
 def start_bot():
-    """Start the bot with comprehensive error handling"""
-    print("=" * 50)
+    print("="*50)
     print("🚀 FOOTBALL BOT STARTUP")
-    print("=" * 50)
-    
-    # Test bot connection
-    if not test_bot_connection():
-        print("❌ Cannot start bot. Please check your BOT_TOKEN.")
+    print("="*50)
+
+    print("🔐 Testing bot connection...")
+    try:
+        bot_info = bot.get_me()
+        print(f"✅ Bot connected: @{bot_info.username}")
+    except Exception as e:
+        print(f"❌ Bot connection failed: {e}")
         return
-    
-    # Test API connection
-    print("🔍 Testing football API...")
-    test_matches = get_todays_matches()
-    print(f"✅ Football API: {len(test_matches)} matches found in target leagues")
-    
-    # Setup scheduler for auto-predictions
+
+    print("🔍 Testing football API availability...")
+    matches = get_todays_matches()
+    print(f"✅ Matches loaded for today: {len(matches)}")
+
     setup_scheduler()
     
-    # Send startup message
     try:
-        startup_msg = f"""
-🤖 **Football Bot Started Successfully!**
-
-• **Bot:** Connected ✅
-• **Matches Loaded:** {len(test_matches)}
-• **API Calls:** {api_hits}
-• **Leagues:** {len(TARGET_LEAGUES)}
-• **Auto Predictions:** ✅ Every 7 minutes
-• **Time:** {datetime.now().strftime("%Y-%m-%d %H:%M")}
-
-**Leagues Tracked:**
-{chr(10).join(TARGET_LEAGUES.values())}
-
-Bot is ready to serve football updates! ⚽
-"""
-        bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
+        bot.send_message(OWNER_CHAT_ID, "🤖 Football Bot Started Successfully!")
         print("✅ Startup message sent")
     except Exception as e:
-        print(f"⚠️ Could not send startup message: {e}")
-    
-    # Start scheduler in separate thread
+        print(f"⚠️ Failed to send startup message: {e}")
+
     import threading
-    scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
-    scheduler_thread.start()
-    print("⏰ Auto-scheduler started in background")
-    
-    # Start polling with skip_pending to avoid 409 conflicts
-    print("🔄 Starting bot polling...")
-    print("📱 Bot is now listening for messages...")
-    print("=" * 50)
-    
+    threading.Thread(target=run_scheduler, daemon=True).start()
+    print("⏰ Scheduler running in background")
+
+    print("📱 Starting bot polling...")
     try:
-        # Use skip_pending=True to skip old updates and avoid conflicts
         bot.polling(none_stop=True, timeout=60, skip_pending=True)
     except Exception as e:
         print(f"❌ Polling error: {e}")
-        if "409" in str(e):
-            print("🔧 Fixing 409 Conflict Error...")
-            print("Waiting 10 seconds and restarting...")
-            time.sleep(10)
-            start_bot()
-        else:
-            print("🔄 Restarting in 10 seconds...")
-            time.sleep(10)
-            start_bot()
 
 if __name__ == '__main__':
-    # Clear any previous webhook to avoid conflicts
-    try:
-        bot.remove_webhook()
-        time.sleep(1)
-    except:
-        pass
-    
     start_bot()

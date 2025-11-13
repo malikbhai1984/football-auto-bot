@@ -24,7 +24,7 @@ if not OWNER_CHAT_ID:
 
 print("🔑 Bot configuration loaded successfully")
 
-# Initialize bot
+# Initialize bot with skip_pending to avoid conflicts
 try:
     bot = telebot.TeleBot(BOT_TOKEN)
     print("✅ Bot initialized successfully")
@@ -336,18 +336,32 @@ Bot is ready to serve football updates! ⚽
     except Exception as e:
         print(f"⚠️ Could not send startup message: {e}")
     
-    # Start polling
+    # Start polling with skip_pending to avoid 409 conflicts
     print("🔄 Starting bot polling...")
     print("📱 Bot is now listening for messages...")
     print("=" * 50)
     
     try:
-        bot.polling(none_stop=True, timeout=60)
+        # Use skip_pending=True to skip old updates and avoid conflicts
+        bot.polling(none_stop=True, timeout=60, skip_pending=True)
     except Exception as e:
         print(f"❌ Polling error: {e}")
-        print("🔄 Restarting in 10 seconds...")
-        time.sleep(10)
-        start_bot()
+        if "409" in str(e):
+            print("🔧 Fixing 409 Conflict Error...")
+            print("Waiting 10 seconds and restarting...")
+            time.sleep(10)
+            start_bot()
+        else:
+            print("🔄 Restarting in 10 seconds...")
+            time.sleep(10)
+            start_bot()
 
 if __name__ == '__main__':
+    # Clear any previous webhook to avoid conflicts
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+    except:
+        pass
+    
     start_bot()

@@ -12,8 +12,6 @@ import threading
 from dotenv import load_dotenv
 import json
 import pytz
-import websocket
-import ssl
 import logging
 
 # -------------------------
@@ -24,7 +22,6 @@ load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_KEY = os.environ.get("API_KEY") or "839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
-ALLSPORTS_API_KEY = os.environ.get("ALLSPORTS_API_KEY") or API_KEY
 
 if not all([BOT_TOKEN, OWNER_CHAT_ID]):
     raise ValueError("❌ BOT_TOKEN or OWNER_CHAT_ID missing!")
@@ -32,360 +29,90 @@ if not all([BOT_TOKEN, OWNER_CHAT_ID]):
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
-# ✅ Check if we should use webhook or polling
-USE_WEBHOOK = bool(os.environ.get("DOMAIN"))
+print(f"🎯 Starting Today's Football Matches Bot...")
 
-print(f"🎯 Starting Enhanced Football Analysis Bot...")
-print(f"🌐 Webhook Mode: {USE_WEBHOOK}")
-
-# ✅ DUAL API CONFIGURATION
+# ✅ API CONFIGURATION
 API_FOOTBALL_URL = "https://apiv3.apifootball.com"
-ALLSPORTS_WS_URL = f"wss://wss.allsportsapi.com/live_events?APIkey={ALLSPORTS_API_KEY}&timezone=+05:00"
 
 # -------------------------
-# ENHANCED MATCH ANALYSIS SYSTEM
+# MATCH MANAGER FOR TODAY'S MATCHES
 # -------------------------
-class MatchAnalysis:
+class TodayMatchesManager:
     def __init__(self):
-        self.match_statistics = {}
-        self.team_performance = {}
-        self.league_standings = {}
+        self.live_matches = []
+        self.upcoming_matches = []
+        self.today_matches = []
+        self.last_update = None
         
-    def analyze_match_trends(self, match_data):
-        """Analyze match trends and patterns"""
-        try:
-            home_team = match_data.get("match_hometeam_name", "")
-            away_team = match_data.get("match_awayteam_name", "")
-            home_score = int(match_data.get("match_hometeam_score", 0))
-            away_score = int(match_data.get("match_awayteam_score", 0))
-            minute = match_data.get("match_status", "0")
-            
-            # Match status analysis
-            if minute == "HT":
-                match_progress = 50
-            elif minute == "FT":
-                match_progress = 100
-            elif minute.isdigit():
-                match_progress = min(100, (int(minute) / 90) * 100)
-            else:
-                match_progress = 0
-            
-            # Score analysis
-            goal_difference = home_score - away_score
-            total_goals = home_score + away_score
-            
-            # Match momentum analysis
-            if goal_difference > 0:
-                momentum = f"🏠 {home_team} dominating"
-                confidence = "HIGH"
-            elif goal_difference < 0:
-                momentum = f"✈️ {away_team} controlling"
-                confidence = "HIGH"
-            else:
-                if total_goals > 2:
-                    momentum = "⚡ Both teams attacking"
-                    confidence = "MEDIUM"
-                else:
-                    momentum = "🛡️ Balanced match"
-                    confidence = "LOW"
-            
-            # Goal timing prediction
-            if match_progress < 30:
-                next_goal_window = "First half"
-            elif match_progress < 60:
-                next_goal_window = "Early second half"
-            elif match_progress < 75:
-                next_goal_window = "Mid second half"
-            else:
-                next_goal_window = "Late game"
-            
-            analysis = {
-                "match_progress": f"{match_progress:.1f}%",
-                "momentum": momentum,
-                "confidence": confidence,
-                "goal_difference": goal_difference,
-                "total_goals": total_goals,
-                "next_goal_window": next_goal_window,
-                "goal_intensity": "HIGH" if total_goals > 2 else "MEDIUM" if total_goals > 0 else "LOW",
-                "match_tempo": self.analyze_tempo(home_score, away_score, match_progress)
-            }
-            
-            return analysis
-            
-        except Exception as e:
-            print(f"❌ Match analysis error: {e}")
-            return {}
-    
-    def analyze_tempo(self, home_score, away_score, progress):
-        """Analyze match tempo"""
-        goal_rate = (home_score + away_score) / (progress / 100) if progress > 0 else 0
-        
-        if goal_rate > 0.1:
-            return "⚡ High Tempo - Goal Fest"
-        elif goal_rate > 0.05:
-            return "🎯 Medium Tempo - Balanced"
-        else:
-            return "🛡️ Low Tempo - Defensive"
-    
-    def generate_detailed_report(self, match_data):
-        """Generate comprehensive match report"""
-        basic_info = self.get_basic_match_info(match_data)
-        analysis = self.analyze_match_trends(match_data)
-        statistics = self.get_match_statistics(match_data)
-        predictions = self.generate_predictions(match_data)
-        
-        report = f"""
-🔍 **DETAILED MATCH ANALYSIS**
-
-{basic_info}
-
-📊 **MATCH ANALYSIS:**
-• Progress: {analysis.get('match_progress', 'N/A')}
-• Momentum: {analysis.get('momentum', 'N/A')}
-• Confidence: {analysis.get('confidence', 'N/A')}
-• Tempo: {analysis.get('match_tempo', 'N/A')}
-• Next Goal Window: {analysis.get('next_goal_window', 'N/A')}
-
-📈 **STATISTICS:**
-{statistics}
-
-🎯 **PREDICTIONS:**
-{predictions}
-
-⚡ **LIVE INSIGHTS:**
-{self.get_live_insights(match_data)}
-"""
-        return report
-    
-    def get_basic_match_info(self, match_data):
-        """Get basic match information"""
-        home_team = match_data.get("match_hometeam_name", "Unknown")
-        away_team = match_data.get("match_awayteam_name", "Unknown")
-        home_score = match_data.get("match_hometeam_score", "0")
-        away_score = match_data.get("match_awayteam_score", "0")
-        minute = match_data.get("match_status", "0")
-        league = match_data.get("league_name", "Unknown League")
-        
-        # Determine match status
-        if minute == "HT":
-            status = "🔄 HALF TIME"
-        elif minute == "FT":
-            status = "🏁 FULL TIME"
-        elif minute.isdigit():
-            status = f"⏱️ LIVE - {minute}'"
-        else:
-            status = f"🕒 {minute}"
-        
-        return f"""
-🏆 **{league}**
-
-⚽ **{home_team}** {home_score} - {away_score} **{away_team}**
-
-{status}
-"""
-    
-    def get_match_statistics(self, match_data):
-        """Extract match statistics"""
-        try:
-            stats = match_data.get("statistics", [])
-            home_stats = {}
-            away_stats = {}
-            
-            # Process statistics if available
-            if stats and len(stats) > 0:
-                for stat in stats:
-                    home_stats[stat.get("type", "")] = stat.get("home", "0")
-                    away_stats[stat.get("type", "")] = stat.get("away", "0")
-            
-            # Default statistics if not available
-            if not home_stats:
-                home_stats = {
-                    "Shots on Goal": random.randint(3, 12),
-                    "Shots off Goal": random.randint(2, 8),
-                    "Ball Possession": f"{random.randint(40, 65)}%",
-                    "Corner Kicks": random.randint(1, 8),
-                    "Fouls": random.randint(5, 15)
-                }
-                away_stats = {
-                    "Shots on Goal": random.randint(3, 12),
-                    "Shots off Goal": random.randint(2, 8),
-                    "Ball Possession": f"{100 - int(home_stats['Ball Possession'].replace('%', ''))}%",
-                    "Corner Kicks": random.randint(1, 8),
-                    "Fouls": random.randint(5, 15)
-                }
-            
-            stats_text = ""
-            for stat_name in ["Shots on Goal", "Shots off Goal", "Ball Possession", "Corner Kicks", "Fouls"]:
-                home_val = home_stats.get(stat_name, "0")
-                away_val = away_stats.get(stat_name, "0")
-                stats_text += f"• {stat_name}: {home_val} | {away_val}\n"
-            
-            return stats_text
-            
-        except Exception as e:
-            print(f"❌ Statistics error: {e}")
-            return "• Statistics: Loading...\n"
-    
-    def generate_predictions(self, match_data):
-        """Generate match predictions"""
-        home_team = match_data.get("match_hometeam_name", "Home")
-        away_team = match_data.get("match_awayteam_name", "Away")
-        home_score = int(match_data.get("match_hometeam_score", 0))
-        away_score = int(match_data.get("match_awayteam_score", 0))
-        minute = match_data.get("match_status", "0")
-        
-        # Calculate probabilities based on current score and time
-        if minute == "HT" or minute == "FT" or (minute.isdigit() and int(minute) > 80):
-            # Late game analysis
-            if home_score > away_score:
-                return f"✅ {home_team} likely to WIN\n❌ {away_team} needs miracle\n⚡ Low chance of draw"
-            elif away_score > home_score:
-                return f"✅ {away_team} likely to WIN\n❌ {home_team} needs miracle\n⚡ Low chance of draw"
-            else:
-                return f"🤝 DRAW looking probable\n⚡ Both teams pushing for win\n🎯 Late goal possible"
-        else:
-            # Early/mid game analysis
-            goal_difference = home_score - away_score
-            
-            if goal_difference == 0:
-                return f"🎯 Both teams can WIN\n⚡ Next goal crucial\n🤝 Draw still possible"
-            elif abs(goal_difference) == 1:
-                leading_team = home_team if goal_difference > 0 else away_team
-                trailing_team = away_team if goal_difference > 0 else home_team
-                return f"✅ {leading_team} has advantage\n⚡ {trailing_team} pushing equalizer\n🎯 More goals expected"
-            else:
-                leading_team = home_team if goal_difference > 0 else away_team
-                return f"✅ {leading_team} dominating\n❌ Big comeback needed\n⚡ Game might be settled"
-    
-    def get_live_insights(self, match_data):
-        """Get live match insights"""
-        home_score = int(match_data.get("match_hometeam_score", 0))
-        away_score = int(match_data.get("match_awayteam_score", 0))
-        minute = match_data.get("match_status", "0")
-        
-        total_goals = home_score + away_score
-        
-        insights = []
-        
-        if total_goals == 0:
-            insights.append("🔒 Defensive battle - No goals yet")
-        elif total_goals >= 3:
-            insights.append("⚡ Goal fest - High scoring game")
-        
-        if home_score > away_score:
-            insights.append(f"🏠 Home advantage showing")
-        elif away_score > home_score:
-            insights.append(f"✈️ Away team impressive")
-        
-        if minute.isdigit() and int(minute) > 75 and abs(home_score - away_score) <= 1:
-            insights.append("🎯 Late drama possible")
-        
-        if not insights:
-            insights.append("⚽ Competitive match underway")
-        
-        return "\n".join([f"• {insight}" for insight in insights])
-
-# Initialize Match Analysis
-match_analyzer = MatchAnalysis()
-
-# -------------------------
-# DUAL API LIVE MATCH MANAGER (Enhanced)
-# -------------------------
-class DualAPIManager:
-    def __init__(self):
-        self.api_football_matches = []
-        self.allsports_matches = []
-        self.last_api_football_update = None
-        self.last_allsports_update = None
-        self.websocket_connected = False
-        self.websocket_retry_count = 0
-        self.max_retries = 5
-        self.match_details_cache = {}  # Cache for detailed match info
-        
-    def update_api_football_matches(self, matches):
-        """Update matches from API-Football"""
-        self.api_football_matches = matches
-        self.last_api_football_update = datetime.now()
-        print(f"✅ API-Football: {len(matches)} matches updated")
-    
-    def update_allsports_matches(self, matches):
-        """Update matches from AllSportsAPI WebSocket"""
-        self.allsports_matches = matches
-        self.last_allsports_update = datetime.now()
-        print(f"✅ AllSportsAPI: {len(matches)} matches updated")
-    
-    def get_best_live_matches(self):
-        """Get best available matches from both APIs"""
+    def update_matches(self, matches):
+        """Update all matches and categorize them"""
         current_time = datetime.now()
+        self.last_update = current_time
         
-        # Prefer WebSocket data if fresh (less than 30 seconds old)
-        if (self.last_allsports_update and 
-            (current_time - self.last_allsports_update).total_seconds() < 30 and 
-            self.allsports_matches):
-            print("🎯 Using AllSportsAPI WebSocket data (REAL-TIME)")
-            return self.allsports_matches, "ALLSPORTS_WS"
+        self.live_matches = []
+        self.upcoming_matches = []
+        self.today_matches = matches
         
-        # Fallback to API-Football if fresh (less than 2 minutes old)
-        elif (self.last_api_football_update and 
-              (current_time - self.last_api_football_update).total_seconds() < 120 and 
-              self.api_football_matches):
-            print("🔄 Using API-Football cached data")
-            return self.api_football_matches, "API_FOOTBALL"
-        
-        # No fresh data available
-        else:
-            print("⚠️ No fresh data from either API")
-            return [], "NONE"
-    
-    def get_api_status(self):
-        """Get status of both APIs"""
-        status = {
-            "api_football": {
-                "status": "ACTIVE" if self.api_football_matches else "INACTIVE",
-                "last_update": self.last_api_football_update.strftime("%H:%M:%S") if self.last_api_football_update else "Never",
-                "match_count": len(self.api_football_matches)
-            },
-            "allsports_websocket": {
-                "status": "CONNECTED" if self.websocket_connected else "DISCONNECTED",
-                "last_update": self.last_allsports_update.strftime("%H:%M:%S") if self.last_allsports_update else "Never", 
-                "match_count": len(self.allsports_matches),
-                "retry_count": self.websocket_retry_count
-            }
-        }
-        return status
-    
-    def find_match_by_teams(self, team1, team2=None):
-        """Find specific match by team names"""
-        all_matches = self.api_football_matches + self.allsports_matches
-        
-        if team2:
-            # Search for match between two specific teams
-            for match in all_matches:
-                home_team = match.get("match_hometeam_name", "").lower()
-                away_team = match.get("match_awayteam_name", "").lower()
-                
-                if (team1.lower() in home_team and team2.lower() in away_team) or \
-                   (team1.lower() in away_team and team2.lower() in home_team):
-                    return match
-        else:
-            # Search for any match involving the team
-            matches_found = []
-            for match in all_matches:
-                home_team = match.get("match_hometeam_name", "").lower()
-                away_team = match.get("match_awayteam_name", "").lower()
-                
-                if team1.lower() in home_team or team1.lower() in away_team:
-                    matches_found.append(match)
+        for match in matches:
+            match_status = match.get("match_status", "")
+            match_time = match.get("match_time", "")
+            match_date = match.get("match_date", "")
             
-            return matches_found if matches_found else None
+            # Categorize matches
+            if match_status == "Live" or match_status.isdigit():
+                self.live_matches.append(match)
+            elif match_status in ["Upcoming", "Pre-match"] or self.is_future_match(match_date, match_time):
+                self.upcoming_matches.append(match)
         
-        return None
+        print(f"✅ Matches updated: {len(self.live_matches)} live, {len(self.upcoming_matches)} upcoming, {len(self.today_matches)} total")
+    
+    def is_future_match(self, match_date, match_time):
+        """Check if match is in future"""
+        try:
+            if not match_date or not match_time:
+                return False
+            
+            # Parse match datetime
+            match_datetime_str = f"{match_date} {match_time}"
+            match_datetime = datetime.strptime(match_datetime_str, "%Y-%m-%d %H:%M:%S")
+            
+            return match_datetime > datetime.now()
+        except:
+            return False
+    
+    def get_today_matches_by_league(self):
+        """Get today's matches grouped by league"""
+        leagues = {}
+        
+        for match in self.today_matches:
+            league_id = match.get("league_id", "unknown")
+            league_name = match.get("league_name", f"League {league_id}")
+            
+            if league_name not in leagues:
+                leagues[league_name] = []
+            leagues[league_name].append(match)
+        
+        return leagues
+    
+    def get_upcoming_matches_schedule(self):
+        """Get schedule of upcoming matches"""
+        schedule = {}
+        
+        for match in self.upcoming_matches:
+            match_time = match.get("match_time", "00:00")
+            hour = match_time.split(':')[0] if match_time else "00"
+            
+            if hour not in schedule:
+                schedule[hour] = []
+            schedule[hour].append(match)
+        
+        return schedule
 
-# Initialize Dual API Manager
-api_manager = DualAPIManager()
+# Initialize Match Manager
+match_manager = TodayMatchesManager()
 
 # -------------------------
-# GLOBAL HIT COUNTER & API OPTIMIZER
+# GLOBAL HIT COUNTER
 # -------------------------
 class GlobalHitCounter:
     def __init__(self):
@@ -449,11 +176,8 @@ class GlobalHitCounter:
         hours_until_reset = int(time_until_reset // 3600)
         minutes_until_reset = int((time_until_reset % 3600) // 60)
         
-        # Get API status
-        api_status = api_manager.get_api_status()
-        
         stats = f"""
-🔥 **GLOBAL HIT COUNTER & API STATUS**
+🔥 **GLOBAL HIT COUNTER STATUS**
 
 📈 **Current Usage:**
 • Total Hits: {self.total_hits}
@@ -465,16 +189,6 @@ class GlobalHitCounter:
 • Daily Remaining: {remaining_daily} calls
 • Time Until Reset: {hours_until_reset}h {minutes_until_reset}m
 • Usage Percentage: {(self.daily_hits/100)*100:.1f}%
-
-🌐 **API STATUS:**
-• API-Football: {api_status['api_football']['status']}
-  - Matches: {api_status['api_football']['match_count']}
-  - Updated: {api_status['api_football']['last_update']}
-  
-• AllSports WebSocket: {api_status['allsports_websocket']['status']}
-  - Matches: {api_status['allsports_websocket']['match_count']}
-  - Updated: {api_status['allsports_websocket']['last_update']}
-  - Retries: {api_status['allsports_websocket']['retry_count']}
 
 ⏰ **Last Hit:** {self.last_hit_time.strftime('%H:%M:%S') if self.last_hit_time else 'Never'}
 
@@ -497,217 +211,44 @@ class GlobalHitCounter:
 hit_counter = GlobalHitCounter()
 
 # -------------------------
-# ALLSPORTS API WEBSOCKET CLIENT
-# -------------------------
-class AllSportsWebSocketClient:
-    def __init__(self):
-        self.ws = None
-        self.connected = False
-        self.reconnect_attempts = 0
-        self.max_reconnect_attempts = 10
-        self.reconnect_delay = 5
-        
-    def on_message(self, ws, message):
-        """Handle incoming WebSocket messages"""
-        try:
-            data = json.loads(message)
-            print(f"\n📡 AllSportsAPI WebSocket Update Received:")
-            
-            # Process the live data
-            matches = self.process_websocket_data(data)
-            if matches:
-                api_manager.update_allsports_matches(matches)
-                api_manager.websocket_connected = True
-                
-        except json.JSONDecodeError as e:
-            print(f"❌ WebSocket JSON Error: {e}")
-        except Exception as e:
-            print(f"❌ WebSocket Message Error: {e}")
-    
-    def on_error(self, ws, error):
-        """Handle WebSocket errors"""
-        print(f"⚠️ WebSocket Error: {error}")
-        api_manager.websocket_connected = False
-        
-    def on_close(self, ws, close_status_code, close_msg):
-        """Handle WebSocket closure"""
-        print(f"🔒 WebSocket Connection Closed: {close_status_code} - {close_msg}")
-        api_manager.websocket_connected = False
-        self.connected = False
-        
-        # Attempt reconnection
-        if self.reconnect_attempts < self.max_reconnect_attempts:
-            self.reconnect_attempts += 1
-            print(f"🔄 Reconnecting in {self.reconnect_delay} seconds... (Attempt {self.reconnect_attempts})")
-            time.sleep(self.reconnect_delay)
-            self.connect()
-        else:
-            print("❌ Max reconnection attempts reached")
-    
-    def on_open(self, ws):
-        """Handle WebSocket connection opening"""
-        print("✅ Connected to AllSportsAPI WebSocket - REAL-TIME UPDATES ACTIVE!")
-        self.connected = True
-        api_manager.websocket_connected = True
-        self.reconnect_attempts = 0  # Reset counter on successful connection
-    
-    def process_websocket_data(self, data):
-        """Process WebSocket data into match format"""
-        try:
-            matches = []
-            
-            # Handle different data structures from WebSocket
-            if isinstance(data, dict):
-                # Single match update
-                if 'event' in data and data['event'] == 'live_update':
-                    match_data = data.get('data', {})
-                    if match_data:
-                        matches.append(self.format_websocket_match(match_data))
-                
-                # Multiple matches in array
-                elif isinstance(data.get('data'), list):
-                    for match in data['data']:
-                        formatted_match = self.format_websocket_match(match)
-                        if formatted_match:
-                            matches.append(formatted_match)
-                
-                # Direct match object
-                elif data.get('match_id'):
-                    formatted_match = self.format_websocket_match(data)
-                    if formatted_match:
-                        matches.append(formatted_match)
-            
-            elif isinstance(data, list):
-                # Array of matches
-                for match in data:
-                    formatted_match = self.format_websocket_match(match)
-                    if formatted_match:
-                        matches.append(formatted_match)
-            
-            print(f"🔄 Processed {len(matches)} matches from WebSocket")
-            return matches
-            
-        except Exception as e:
-            print(f"❌ WebSocket data processing error: {e}")
-            return []
-    
-    def format_websocket_match(self, match_data):
-        """Format WebSocket match data to standard format"""
-        try:
-            # Map different field names to standard format
-            home_team = match_data.get('match_hometeam_name') or match_data.get('home_team') or "Unknown"
-            away_team = match_data.get('match_awayteam_name') or match_data.get('away_team') or "Unknown"
-            home_score = str(match_data.get('match_hometeam_score') or match_data.get('home_score') or "0")
-            away_score = str(match_data.get('match_awayteam_score') or match_data.get('away_score') or "0")
-            minute = match_data.get('match_status') or match_data.get('minute') or match_data.get('time') or "0"
-            league_id = match_data.get('league_id') or "unknown"
-            
-            # Determine match status
-            if minute == "HT":
-                match_status = "HALF TIME"
-                display_minute = "HT"
-            elif minute == "FT":
-                match_status = "FULL TIME"
-                display_minute = "FT"
-            elif isinstance(minute, int) or (isinstance(minute, str) and minute.isdigit()):
-                match_status = "LIVE"
-                display_minute = f"{minute}'"
-            elif minute in ["1H", "2H"]:
-                match_status = "LIVE"
-                display_minute = minute
-            else:
-                match_status = "UPCOMING"
-                display_minute = minute
-            
-            return {
-                "match_hometeam_name": home_team,
-                "match_awayteam_name": away_team,
-                "match_hometeam_score": home_score,
-                "match_awayteam_score": away_score,
-                "match_status": minute,
-                "league_id": league_id,
-                "league_name": get_league_name(league_id),
-                "match_live": "1",
-                "source": "allsports_websocket",
-                "timestamp": datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            print(f"❌ WebSocket match formatting error: {e}")
-            return None
-    
-    def connect(self):
-        """Connect to WebSocket"""
-        try:
-            print(f"🔗 Connecting to AllSportsAPI WebSocket...")
-            self.ws = websocket.WebSocketApp(
-                ALLSPORTS_WS_URL,
-                on_open=self.on_open,
-                on_message=self.on_message,
-                on_error=self.on_error,
-                on_close=self.on_close
-            )
-            
-            # Run WebSocket in background thread
-            def run_websocket():
-                self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
-            
-            ws_thread = threading.Thread(target=run_websocket, daemon=True)
-            ws_thread.start()
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ WebSocket connection failed: {e}")
-            api_manager.websocket_connected = False
-            return False
-    
-    def disconnect(self):
-        """Disconnect WebSocket"""
-        if self.ws:
-            self.ws.close()
-        self.connected = False
-        api_manager.websocket_connected = False
-
-# Initialize WebSocket Client
-websocket_client = AllSportsWebSocketClient()
-
-# -------------------------
 # COMPREHENSIVE LEAGUE CONFIGURATION
 # -------------------------
 LEAGUE_CONFIG = {
     # Major European Leagues
-    "152": {"name": "Premier League", "priority": 1, "type": "domestic"},
-    "302": {"name": "La Liga", "priority": 1, "type": "domestic"},
-    "207": {"name": "Serie A", "priority": 1, "type": "domestic"},
-    "168": {"name": "Bundesliga", "priority": 1, "type": "domestic"},
-    "176": {"name": "Ligue 1", "priority": 1, "type": "domestic"},
-    
-    # European Competitions
-    "149": {"name": "Champions League", "priority": 1, "type": "european"},
-    "150": {"name": "Europa League", "priority": 2, "type": "european"},
+    "152": {"name": "Premier League", "priority": 1, "type": "domestic", "emoji": "🏴󠁧󠁢󠁥󠁮󠁧󠁿"},
+    "302": {"name": "La Liga", "priority": 1, "type": "domestic", "emoji": "🇪🇸"},
+    "207": {"name": "Serie A", "priority": 1, "type": "domestic", "emoji": "🇮🇹"},
+    "168": {"name": "Bundesliga", "priority": 1, "type": "domestic", "emoji": "🇩🇪"},
+    "176": {"name": "Ligue 1", "priority": 1, "type": "domestic", "emoji": "🇫🇷"},
+    "262": {"name": "UEFA Champions League", "priority": 1, "type": "european", "emoji": "⭐"},
+    "263": {"name": "UEFA Europa League", "priority": 2, "type": "european", "emoji": "🌍"},
+    "264": {"name": "UEFA Conference League", "priority": 2, "type": "european", "emoji": "🔵"},
     
     # World Cup Qualifiers
-    "5": {"name": "World Cup Qualifiers (UEFA)", "priority": 1, "type": "worldcup"},
-    "6": {"name": "World Cup Qualifiers (AFC)", "priority": 2, "type": "worldcup"},
-    "7": {"name": "World Cup Qualifiers (CONMEBOL)", "priority": 1, "type": "worldcup"},
-    "8": {"name": "World Cup Qualifiers (CONCACAF)", "priority": 2, "type": "worldcup"},
-    "9": {"name": "World Cup Qualifiers (CAF)", "priority": 2, "type": "worldcup"},
-    "10": {"name": "World Cup Qualifiers (OFC)", "priority": 3, "type": "worldcup"},
+    "5": {"name": "World Cup Qualifiers (UEFA)", "priority": 1, "type": "worldcup", "emoji": "🌎"},
+    "6": {"name": "World Cup Qualifiers (AFC)", "priority": 2, "type": "worldcup", "emoji": "🌏"},
+    "7": {"name": "World Cup Qualifiers (CONMEBOL)", "priority": 1, "type": "worldcup", "emoji": "🇧🇷"},
+    "8": {"name": "World Cup Qualifiers (CONCACAF)", "priority": 2, "type": "worldcup", "emoji": "🇺🇸"},
+    "9": {"name": "World Cup Qualifiers (CAF)", "priority": 2, "type": "worldcup", "emoji": "🇿🇦"},
+    
+    # Other Important Leagues
+    "175": {"name": "Saudi Pro League", "priority": 2, "type": "domestic", "emoji": "🇸🇦"},
+    "344": {"name": "Major League Soccer", "priority": 2, "type": "domestic", "emoji": "🇺🇸"},
+    "127": {"name": "UEFA Euro Qualifiers", "priority": 1, "type": "european", "emoji": "🇪🇺"},
 }
 
 def get_league_name(league_id):
     """Get league name from ID"""
     league_info = LEAGUE_CONFIG.get(str(league_id))
     if league_info:
-        return league_info["name"]
-    return f"League {league_id}"
+        return f"{league_info['emoji']} {league_info['name']}"
+    return f"⚽ League {league_id}"
 
 # -------------------------
-# API-FOOTBALL HTTP CLIENT
+# API-FOOTBALL HTTP CLIENT (ENHANCED FOR TODAY'S MATCHES)
 # -------------------------
-def fetch_api_football_matches():
-    """Fetch matches from API-Football HTTP API"""
+def fetch_todays_matches():
+    """Fetch today's matches from API-Football"""
     
     # Record the hit
     hit_info = hit_counter.record_hit()
@@ -719,10 +260,13 @@ def fetch_api_football_matches():
         return []
     
     try:
-        # Use the optimized URL with match_live=1 parameter
-        url = f"{API_FOOTBALL_URL}/?action=get_events&match_live=1&APIkey={API_KEY}"
+        # Get today's date
+        today = datetime.now().strftime("%Y-%m-%d")
         
-        print(f"📡 Fetching from API-Football HTTP...")
+        # Fetch matches for today
+        url = f"{API_FOOTBALL_URL}/?action=get_events&from={today}&to={today}&APIkey={API_KEY}"
+        
+        print(f"📡 Fetching today's matches from API-Football...")
         print(f"🔗 URL: {url.replace(API_KEY, 'API_KEY_HIDDEN')}")
         
         start_time = time.time()
@@ -737,17 +281,27 @@ def fetch_api_football_matches():
             print(f"📦 Response Type: {type(data)}")
             
             if isinstance(data, list):
-                print(f"✅ API-Football: Found {len(data)} live matches")
+                print(f"✅ Today's Matches: Found {len(data)} matches")
                 
-                # Add league names to matches
+                # Add league names and process match data
+                processed_matches = []
                 for match in data:
                     league_id = match.get("league_id", "")
                     match["league_name"] = get_league_name(league_id)
                     match["source"] = "api_football"
+                    
+                    # Ensure all required fields
+                    match.setdefault("match_hometeam_score", "0")
+                    match.setdefault("match_awayteam_score", "0")
+                    match.setdefault("match_status", "Upcoming")
+                    match.setdefault("match_time", "00:00")
+                    match.setdefault("match_date", today)
+                    
+                    processed_matches.append(match)
                 
-                return data
+                return processed_matches
             else:
-                print(f"❌ API-Football: Invalid response format: {data}")
+                print(f"❌ API-Football: Invalid response format")
                 return []
         else:
             print(f"❌ API-Football: HTTP Error {response.status_code}")
@@ -763,29 +317,27 @@ def fetch_api_football_matches():
         print(f"❌ API-Football fetch error: {str(e)}")
         return []
 
-# -------------------------
-# DUAL API MATCH FETCHER
-# -------------------------
-def fetch_live_matches_dual_api():
-    """Fetch matches using both APIs - WebSocket preferred"""
-    
-    # Get best available matches
-    matches, source = api_manager.get_best_live_matches()
-    
-    # If no WebSocket data, try API-Football
-    if source in ["NONE", "API_FOOTBALL"]:
-        print("🔄 Falling back to API-Football HTTP...")
-        api_football_matches = fetch_api_football_matches()
-        if api_football_matches:
-            api_manager.update_api_football_matches(api_football_matches)
-            matches = api_football_matches
-            source = "API_FOOTBALL"
-    
-    print(f"🎯 Final match source: {source}, Matches: {len(matches)}")
-    return matches, source
+def fetch_live_matches_only():
+    """Fetch only live matches"""
+    try:
+        url = f"{API_FOOTBALL_URL}/?action=get_events&match_live=1&APIkey={API_KEY}"
+        
+        hit_counter.record_hit()
+        
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list):
+                for match in data:
+                    league_id = match.get("league_id", "")
+                    match["league_name"] = get_league_name(league_id)
+                return data
+        return []
+    except:
+        return []
 
 # -------------------------
-# MATCH PROCESSOR
+# MATCH PROCESSOR (ENHANCED)
 # -------------------------
 def process_match_data(matches):
     """Process raw match data for display"""
@@ -795,33 +347,42 @@ def process_match_data(matches):
     processed_matches = []
     for match in matches:
         try:
-            home_team = match.get("match_hometeam_name", "Unknown")
-            away_team = match.get("match_awayteam_name", "Unknown")
+            home_team = match.get("match_hometeam_name", "Unknown Team")
+            away_team = match.get("match_awayteam_name", "Unknown Team")
             home_score = match.get("match_hometeam_score", "0")
             away_score = match.get("match_awayteam_score", "0")
             minute = match.get("match_status", "0")
             league_name = match.get("league_name", "Unknown League")
-            source = match.get("source", "unknown")
+            match_time = match.get("match_time", "00:00")
+            match_date = match.get("match_date", "")
             
-            # Determine match status
+            # Determine match status and emoji
             if minute == "HT":
                 match_status = "HALF TIME"
                 display_minute = "HT"
+                status_emoji = "🔄"
             elif minute == "FT":
                 match_status = "FULL TIME"
                 display_minute = "FT"
+                status_emoji = "🏁"
             elif minute.isdigit():
                 match_status = "LIVE"
                 display_minute = f"{minute}'"
-            elif minute in ["1H", "2H"]:
-                match_status = "LIVE"
-                display_minute = minute
+                status_emoji = "⏱️"
             else:
                 match_status = "UPCOMING"
-                display_minute = minute
+                display_minute = match_time
+                status_emoji = "🕒"
             
-            # Source icon
-            source_icon = "🔴" if source == "allsports_websocket" else "🔵"
+            # Format match time nicely
+            try:
+                if match_time and len(match_time) >= 5:
+                    time_obj = datetime.strptime(match_time, "%H:%M:%S")
+                    formatted_time = time_obj.strftime("%I:%M %p")
+                else:
+                    formatted_time = match_time
+            except:
+                formatted_time = match_time
             
             processed_matches.append({
                 "home_team": home_team,
@@ -830,10 +391,12 @@ def process_match_data(matches):
                 "minute": display_minute,
                 "status": match_status,
                 "league": league_name,
+                "match_time": formatted_time,
+                "match_date": match_date,
                 "is_live": match_status == "LIVE",
-                "source": source,
-                "source_icon": source_icon,
-                "raw_data": match  # Keep original data for analysis
+                "is_upcoming": match_status == "UPCOMING",
+                "status_emoji": status_emoji,
+                "raw_data": match
             })
             
         except Exception as e:
@@ -843,9 +406,9 @@ def process_match_data(matches):
     return processed_matches
 
 # -------------------------
-# ENHANCED FOOTBALL AI WITH DETAILED ANALYSIS
+# ENHANCED FOOTBALL AI FOR TODAY'S MATCHES
 # -------------------------
-class EnhancedFootballAI:
+class TodayFootballAI:
     def __init__(self):
         self.team_data = {
             "manchester city": {"strength": 95, "style": "attacking"},
@@ -854,10 +417,15 @@ class EnhancedFootballAI:
             "real madrid": {"strength": 94, "style": "experienced"},
             "barcelona": {"strength": 92, "style": "possession"},
             "bayern munich": {"strength": 93, "style": "dominant"},
-            "brazil": {"strength": 96, "style": "samba"},
-            "argentina": {"strength": 94, "style": "technical"},
-            "france": {"strength": 95, "style": "balanced"},
-            "germany": {"strength": 92, "style": "efficient"},
+            "psg": {"strength": 91, "style": "attacking"},
+            "manchester united": {"strength": 88, "style": "transition"},
+            "chelsea": {"strength": 87, "style": "possession"},
+            "tottenham": {"strength": 86, "style": "attacking"},
+            "ac milan": {"strength": 89, "style": "technical"},
+            "inter": {"strength": 89, "style": "counter attack"},
+            "juventus": {"strength": 88, "style": "defensive"},
+            "atletico madrid": {"strength": 89, "style": "defensive"},
+            "borussia dortmund": {"strength": 88, "style": "attacking"},
         }
     
     def get_response(self, message):
@@ -866,36 +434,85 @@ class EnhancedFootballAI:
         if any(word in message_lower for word in ['live', 'current', 'matches', 'scores']):
             return self.handle_live_matches()
         
+        elif any(word in message_lower for word in ['today', 'aaj', 'aj', 'upcoming', 'schedule']):
+            return self.handle_todays_matches()
+        
         elif any(word in message_lower for word in ['hit', 'counter', 'stats', 'api']):
             return hit_counter.get_hit_stats()
         
         elif any(word in message_lower for word in ['predict', 'prediction']):
             return self.handle_prediction(message_lower)
         
-        elif any(word in message_lower for word in ['api status', 'connection']):
-            return self.handle_api_status()
-        
-        elif any(word in message_lower for word in ['analysis', 'analyze', 'detail', 'report']):
-            return self.handle_detailed_analysis(message_lower)
+        elif any(word in message_lower for word in ['team', 'search']):
+            return self.handle_team_search(message_lower)
         
         elif any(word in message_lower for word in ['hello', 'hi', 'hey']):
-            return "👋 Hello! I'm ENHANCED Football Analysis AI! ⚽\n\n🔍 **Detailed Match Analysis**\n🌐 **Real-time updates via WebSocket**\n🔄 **Fallback to HTTP API**\n\nTry: 'live matches', 'analysis man city', or 'api status'"
+            return "👋 Hello! I'm Today's Football Matches AI! ⚽\n\n📅 **Today's matches with schedule**\n🔴 **Live scores updates**\n🎯 **Match predictions**\n\nTry: 'today matches', 'live scores', or 'upcoming matches'"
         
         else:
-            return self.handle_team_specific_query(message_lower)
+            return self.handle_general_query(message_lower)
 
-    def handle_live_matches(self):
-        raw_matches, source = fetch_live_matches_dual_api()
+    def handle_todays_matches(self):
+        """Handle today's matches with schedule"""
+        raw_matches = fetch_todays_matches()
+        match_manager.update_matches(raw_matches)
         matches = process_match_data(raw_matches)
         
         if not matches:
-            return "⏳ No live matches found right now.\n\n🌐 **API Status:**\n" + self.get_api_status_text()
+            return "❌ آج کے لیے کوئی میچ نہیں ہیں۔\n\nNo matches found for today."
         
-        response = "🔴 **LIVE FOOTBALL MATCHES** ⚽\n\n"
+        response = f"📅 **آج کے فٹ بال میچز - Today's Football Matches**\n\n"
+        response += f"⏰ Last Updated: {datetime.now().strftime('%I:%M %p')}\n\n"
         
-        # Add source info
-        source_text = "🔴 REAL-TIME WebSocket" if source == "ALLSPORTS_WS" else "🔵 API-Football HTTP"
-        response += f"📡 **Source:** {source_text}\n\n"
+        # Group by league
+        leagues = match_manager.get_today_matches_by_league()
+        
+        # Separate live and upcoming matches
+        live_matches = [m for m in matches if m['is_live']]
+        upcoming_matches = [m for m in matches if m['is_upcoming']]
+        
+        if live_matches:
+            response += "🔴 **LIVE MATCHES - براہ راست میچز**\n"
+            for match in live_matches[:8]:  # Show max 8 live matches
+                response += f"{match['status_emoji']} {match['home_team']} {match['score']} {match['away_team']} - {match['minute']}\n"
+            response += "\n"
+        
+        if upcoming_matches:
+            response += "🕒 **UPCOMING MATCHES - آنے والے میچز**\n"
+            
+            # Group by time
+            schedule = {}
+            for match in upcoming_matches:
+                time_key = match['match_time']
+                if time_key not in schedule:
+                    schedule[time_key] = []
+                schedule[time_key].append(match)
+            
+            # Show matches in time order
+            for time_slot in sorted(schedule.keys()):
+                response += f"\n🕐 **{time_slot}**\n"
+                for match in schedule[time_slot]:
+                    response += f"• {match['home_team']} vs {match['away_team']} - {match['league']}\n"
+        
+        response += f"\n📊 **Summary:** {len(live_matches)} Live, {len(upcoming_matches)} Upcoming, {len(matches)} Total"
+        response += f"\n🔥 API Hits Today: {hit_counter.daily_hits}/100"
+        
+        return response
+
+    def handle_live_matches(self):
+        """Handle live matches only"""
+        raw_matches = fetch_live_matches_only()
+        matches = process_match_data(raw_matches)
+        
+        if not matches:
+            # Try to get from today's matches
+            raw_matches = fetch_todays_matches()
+            matches = [m for m in process_match_data(raw_matches) if m['is_live']]
+            
+            if not matches:
+                return "🔴 فی الحال کوئی لائیو میچ نہیں چل رہا۔\n\nNo live matches at the moment."
+        
+        response = "🔴 **LIVE FOOTBALL MATCHES - براہ راست فٹ بال میچز**\n\n"
         
         # Group by league
         leagues = {}
@@ -908,81 +525,54 @@ class EnhancedFootballAI:
         for league, league_matches in leagues.items():
             response += f"**{league}**\n"
             for match in league_matches:
-                icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                response += f"{match['source_icon']} {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}\n"
+                response += f"{match['status_emoji']} {match['home_team']} {match['score']} {match['away_team']} - {match['minute']}\n"
             response += "\n"
         
-        response += f"🔥 API Hits Today: {hit_counter.daily_hits}/100\n"
-        response += f"🌐 Data Source: {source}\n"
-        response += self.get_api_status_text()
+        response += f"🔥 API Hits Today: {hit_counter.daily_hits}/100"
         
         return response
 
-    def handle_detailed_analysis(self, message):
-        """Handle detailed match analysis requests"""
-        # Extract team names from message
-        teams = []
+    def handle_team_search(self, message):
+        """Handle team-specific searches"""
         for team in self.team_data:
             if team in message.lower():
-                teams.append(team)
-        
-        if teams:
-            # Find matches involving these teams
-            matches_found = []
-            for team in teams:
-                team_matches = api_manager.find_match_by_teams(team)
-                if team_matches:
-                    if isinstance(team_matches, list):
-                        matches_found.extend(team_matches)
-                    else:
-                        matches_found.append(team_matches)
-            
-            if matches_found:
-                # Get the first match for analysis
-                match_data = matches_found[0]
-                return match_analyzer.generate_detailed_report(match_data)
-            else:
-                return f"❌ No live matches found for {', '.join(teams)}. Try 'live matches' to see current games."
-        else:
-            # Show analysis for all current matches
-            raw_matches, source = fetch_live_matches_dual_api()
-            if not raw_matches:
-                return "❌ No live matches available for analysis."
-            
-            response = "🔍 **DETAILED MATCH ANALYSIS SUMMARY**\n\n"
-            
-            for i, match in enumerate(raw_matches[:5]):  # Limit to 5 matches
-                analysis = match_analyzer.analyze_match_trends(match)
-                home_team = match.get("match_hometeam_name", "Unknown")
-                away_team = match.get("match_awayteam_name", "Unknown")
-                score = f"{match.get('match_hometeam_score', '0')}-{match.get('match_awayteam_score', '0')}"
+                # Search in today's matches
+                raw_matches = fetch_todays_matches()
+                team_matches = []
                 
-                response += f"**{home_team} vs {away_team}**\n"
-                response += f"Score: {score} | Progress: {analysis.get('match_progress', 'N/A')}\n"
-                response += f"Momentum: {analysis.get('momentum', 'N/A')}\n"
-                response += f"Tempo: {analysis.get('match_tempo', 'N/A')}\n\n"
-            
-            response += "💡 *Use 'analysis [team name]' for detailed match report*"
-            return response
-
-    def handle_team_specific_query(self, message):
-        """Handle team-specific queries"""
-        for team in self.team_data:
-            if team in message.lower():
-                # Check if this team is playing
-                matches = api_manager.find_match_by_teams(team)
-                if matches:
-                    if isinstance(matches, list):
-                        match_data = matches[0]
-                    else:
-                        match_data = matches
+                for match in raw_matches:
+                    home_team = match.get("match_hometeam_name", "").lower()
+                    away_team = match.get("match_awayteam_name", "").lower()
                     
-                    return match_analyzer.generate_detailed_report(match_data)
+                    if team in home_team or team in away_team:
+                        team_matches.append(match)
+                
+                if team_matches:
+                    response = f"🔍 **{team.title()} کے آج کے میچز**\n\n"
+                    for match in team_matches:
+                        home_team = match.get("match_hometeam_name", "Unknown")
+                        away_team = match.get("match_awayteam_name", "Unknown")
+                        score = f"{match.get('match_hometeam_score', '0')}-{match.get('match_awayteam_score', '0')}"
+                        status = match.get("match_status", "Upcoming")
+                        time = match.get("match_time", "00:00")
+                        league = match.get("league_name", "Unknown League")
+                        
+                        if status == "Live" or status.isdigit():
+                            status_text = f"LIVE - {status}'"
+                            emoji = "🔴"
+                        else:
+                            status_text = f"At {time}"
+                            emoji = "🕒"
+                        
+                        response += f"{emoji} **{home_team} vs {away_team}**\n"
+                        response += f"   📊 {score} | {status_text}\n"
+                        response += f"   🏆 {league}\n\n"
+                    
+                    return response
                 else:
-                    return f"❌ {team.title()} is not playing right now. Try 'live matches' to see current games."
+                    return f"❌ آج {team.title()} کا کوئی میچ نہیں ہے۔\n\nNo matches found for {team.title()} today."
         
-        # Default response for unrecognized queries
-        return "🤖 **ENHANCED FOOTBALL ANALYSIS AI** ⚽\n\n🔍 **Detailed Match Analysis**\n🌐 **Real-time WebSocket Updates**\n🔄 **HTTP API Fallback**\n\nTry: 'live matches', 'analysis man city', 'api status', or 'hit stats'"
+        return "🔍 براہ کرم ٹیم کا صحیح نام درج کریں۔\n\nPlease enter a valid team name."
 
     def handle_prediction(self, message):
         teams = []
@@ -994,7 +584,17 @@ class EnhancedFootballAI:
             home_team, away_team = teams[0], teams[1]
             return self.generate_prediction(home_team, away_team)
         else:
-            return "Please specify two teams for prediction. Example: 'Predict Manchester City vs Liverpool' or 'Brazil vs Argentina'"
+            prediction_help = """
+🎯 **میچ پیشن گوئی - Match Prediction**
+
+مثال کے طور پر لکھیں:
+• "پریڈکٹ مانچسٹر سٹی بمقابلہ لیورپول"
+• "پیشن گوئی برازیل بمقابلہ ارجنٹینا"
+• "predict man city vs liverpool"
+
+میں ٹیموں کی طاقت کا تجزیہ کر کے آپ کو احتمالات بتاؤں گا! 📊
+"""
+            return prediction_help
 
     def generate_prediction(self, team1, team2):
         team1_data = self.team_data.get(team1.lower(), {"strength": 80})
@@ -1014,88 +614,100 @@ class EnhancedFootballAI:
             winner = team2.title()
         
         return f"""
-🎯 **PREDICTION: {team1.upper()} vs {team2.upper()}**
+🎯 **پیشن گوئی: {team1.upper()} بمقابلہ {team2.upper()}**
 
-📊 **Probabilities:**
+📊 **امکانات:**
 • {team1.title()}: {prob1:.1f}%
 • {team2.title()}: {prob2:.1f}%  
-• Draw: {draw_prob:.1f}%
+• ڈرا: {draw_prob:.1f}%
 
-🏆 **Most Likely: {winner}**
+🏆 **سب سے زیادہ ممکنہ نتیجہ: {winner}**
 
-⚽ **Expected: High-scoring match with both teams attacking!**
+⚽ **توقع: دونوں ٹیمیں حملہ آور کھیل کھیلیں گی!**
 
-⚠️ *Football is unpredictable - enjoy the game!*
+⚠️ *فٹ بال غیر متوقع ہے - میچ کا لطف اٹھائیں!*
 """
 
-    def handle_api_status(self):
-        return self.get_api_status_text()
-    
-    def get_api_status_text(self):
-        """Get API status as formatted text"""
-        status = api_manager.get_api_status()
+    def handle_general_query(self, message):
+        """Handle general queries"""
+        if any(word in message for word in ['شکریہ', 'thanks', 'thank you']):
+            return "👍 آپ کا شکریہ! مزید معلومات کے لیے پوچھتے رہیں۔\n\nYou're welcome! Ask for more information."
         
-        return f"""
-🌐 **DUAL API STATUS**
+        elif any(word in message for word in ['help', 'مدد']):
+            return self.get_help_message()
+        
+        else:
+            return self.get_help_message()
 
-🔵 **API-Football (HTTP):**
-• Status: {status['api_football']['status']}
-• Matches: {status['api_football']['match_count']}
-• Updated: {status['api_football']['last_update']}
+    def get_help_message(self):
+        """Get help message in Urdu/English"""
+        return """
+🤖 **آج کے فٹ بال میچز بوٹ - Today's Football Matches Bot**
 
-🔴 **AllSportsAPI (WebSocket):**
-• Status: {status['allsports_websocket']['status']}
-• Matches: {status['allsports_websocket']['match_count']}
-• Updated: {status['allsports_websocket']['last_update']}
-• Retries: {status['allsports_websocket']['retry_count']}
+📅 **آج کے میچز دیکھیں:**
+• "آج کے میچز" - Today's matches
+• "لائیو میچز" - Live matches  
+• "آنے والے میچز" - Upcoming matches
 
-💡 **WebSocket provides real-time updates**
-💡 **HTTP API used as fallback**
+🔍 **ٹیم سرچ:**
+• "مانچسٹر سٹی میچ" - Manchester City matches
+• "لیورپول سرچ" - Liverpool search
+
+🎯 **پیشن گوئی:**
+• "پریڈکٹ ٹیم1 بمقابلہ ٹیم2"
+• "پیشن گوئی برازیل ارجنٹینا"
+
+📊 **API معلومات:**
+• "ہٹ کاؤنٹر" - Hit counter
+• "API اسٹیٹس" - API status
+
+⚽ **Enjoy football matches with real-time updates!**
 """
 
-# Initialize Enhanced AI
-football_ai = EnhancedFootballAI()
+# Initialize AI
+football_ai = TodayFootballAI()
 
 # -------------------------
-# TELEGRAM BOT HANDLERS (Enhanced)
+# TELEGRAM BOT HANDLERS
 # -------------------------
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     welcome_text = """
-🤖 **ENHANCED FOOTBALL ANALYSIS BOT** ⚽
+🤖 **آج کے فٹ بال میچز بوٹ - Today's Football Matches Bot** ⚽
 
-🚀 **NOW WITH DETAILED MATCH ANALYSIS!**
+📅 **آج کے تمام میچز دیکھیں**
+🔴 **لائیو اسکورز اپڈیٹس**
+🎯 **میچ پیشن گوئی**
+🔍 **ٹیم کی سرچ**
 
-🔍 **NEW FEATURES:**
-• Detailed Match Analysis & Statistics
-• Live Match Trends & Momentum
-• Team Performance Insights
-• Advanced Predictions
-• Real-time WebSocket Updates
+🕌 **اردو اور انگریزی دونوں میں بات کریں**
 
-🌐 **DUAL API SYSTEM:**
-• 🔴 AllSportsAPI WebSocket (Real-time)
-• 🔵 API-Football HTTP (Fallback)
-• 🎯 Perfect Failover System
+⚡ **کمانڈز:**
+/today - آج کے تمام میچز
+/live - لائیو میچز
+/upcoming - آنے والے میچز
+/predict - میچ پیشن گوئی
+/search - ٹیم سرچ
+/hits - API ہٹ کاؤنٹر
 
-⚡ **Commands:**
-/live - Live matches (Real-time preferred)
-/analysis - Detailed match analysis
-/status - API connection status
-/hits - API hit statistics
-/predict - Match predictions
-/help - Complete guide
+💬 **قدرتی بات چیت:**
+"آج کے میچز"
+"لائیو اسکورز" 
+"مانچسٹر یونائیٹڈ میچ"
+"پیشن گوئی برازیل ارجنٹینا"
 
-💬 **Natural Chat:**
-"show me live matches"
-"analysis manchester city"
-"detailed report for barcelona"
-"api status" 
-"hit counter stats"
-
-🚀 **Real-time analysis with automatic fallback!**
+🚀 **آج کے میچز حاصل کریں!**
 """
     bot.reply_to(message, welcome_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['today', 'aaj', 'aj'])
+def send_todays_matches(message):
+    try:
+        bot.send_chat_action(message.chat.id, 'typing')
+        response = football_ai.handle_todays_matches()
+        bot.reply_to(message, response, parse_mode='Markdown')
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
 
 @bot.message_handler(commands=['live'])
 def send_live_matches(message):
@@ -1106,22 +718,29 @@ def send_live_matches(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
-@bot.message_handler(commands=['analysis', 'detail', 'report'])
-def send_detailed_analysis(message):
+@bot.message_handler(commands=['upcoming'])
+def send_upcoming_matches(message):
     try:
         bot.send_chat_action(message.chat.id, 'typing')
-        # Extract text after command
-        command_text = message.text.split(' ', 1)
-        query = command_text[1] if len(command_text) > 1 else ""
-        
-        if query:
-            response = football_ai.handle_detailed_analysis(query)
-        else:
-            response = football_ai.handle_detailed_analysis("analysis")
-            
+        response = football_ai.handle_todays_matches()  # This shows both live and upcoming
         bot.reply_to(message, response, parse_mode='Markdown')
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['search'])
+def send_search_help(message):
+    help_text = """
+🔍 **ٹیم سرچ - Team Search**
+
+مثال کے طور پر لکھیں:
+• "مانچسٹر سٹی"
+• "لیورپول میچ"
+• "برازیل سرچ"
+• "realmadrid"
+
+میں آج کے اس ٹیم کے میچز دکھاؤں گا! 🔎
+"""
+    bot.reply_to(message, help_text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['hits', 'stats'])
 def send_hit_stats(message):
@@ -1131,74 +750,17 @@ def send_hit_stats(message):
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
-@bot.message_handler(commands=['status', 'api'])
-def send_api_status(message):
-    try:
-        response = football_ai.handle_api_status()
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
 @bot.message_handler(commands=['predict'])
 def send_predict_help(message):
     help_text = """
-🎯 **MATCH PREDICTIONS**
+🎯 **میچ پیشن گوئی - Match Prediction**
 
-Ask me like:
-• "Predict Manchester City vs Liverpool"
-• "Who will win Barcelona vs Real Madrid?"
-• "Brazil vs Argentina prediction"
+مثال کے طور پر لکھیں:
+• "پریڈکٹ مانچسٹر سٹی بمقابلہ لیورپول"
+• "پیشن گوئی برازیل بمقابلہ ارجنٹینا"
+• "predict man city vs liverpool"
 
-I'll analyze team strengths and give you probabilities! 📊
-"""
-    bot.reply_to(message, help_text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['help'])
-def send_help(message):
-    help_text = """
-🤖 **ENHANCED FOOTBALL ANALYSIS BOT HELP**
-
-🔍 **NEW ANALYSIS FEATURES:**
-• Detailed match statistics
-• Live momentum analysis
-• Goal timing predictions
-• Team performance insights
-• Match tempo analysis
-
-⚡ **QUICK COMMANDS:**
-/live - Live matches (Real-time WebSocket)
-/analysis - Detailed match analysis
-/status - API connection status
-/hits - API hit counter statistics  
-/predict - Match predictions
-/help - This help message
-
-🌐 **API SYSTEM:**
-• 🔴 AllSportsAPI WebSocket - Real-time updates
-• 🔵 API-Football HTTP - Reliable fallback
-• Automatic failover between APIs
-• Real-time status monitoring
-
-💬 **CHAT EXAMPLES:**
-• "Show me live matches"
-• "Analysis Manchester City"
-• "Detailed report for Barcelona vs Real Madrid"
-• "API status"
-• "Hit counter stats"
-
-🎯 **FEATURES:**
-• Real-time live scores (WebSocket)
-• Detailed match analysis
-• HTTP API fallback
-• Global hit counter
-• Smart API caching
-• Match predictions
-
-🔥 **HIT COUNTER:**
-• Tracks all API calls
-• Daily limit: 100 calls
-• Prevents overuse
-• Real-time statistics
+میں ٹیموں کی طاقت کا تجزیہ کر کے آپ کو احتمالات بتاؤں گا! 📊
 """
     bot.reply_to(message, help_text, parse_mode='Markdown')
 
@@ -1218,48 +780,29 @@ def handle_all_messages(message):
         
     except Exception as e:
         print(f"❌ Message error: {e}")
-        bot.reply_to(message, "❌ Sorry, error occurred. Please try again!")
+        bot.reply_to(message, "❌ معذرت، غلطی ہوئی۔ براہ کرم دوبارہ کوشش کریں!\n\nSorry, error occurred. Please try again!")
 
 # -------------------------
-# AUTO UPDATER WITH DUAL API SUPPORT
+# AUTO UPDATER
 # -------------------------
 def auto_updater():
-    """Auto-update matches with dual API support"""
-    
-    # Start WebSocket connection first
-    print("🔗 Starting WebSocket connection...")
-    websocket_client.connect()
-    
+    """Auto-update matches periodically"""
     while True:
         try:
             current_time = datetime.now().strftime("%H:%M:%S")
-            print(f"\n🔄 [{current_time}] Dual-API update check...")
+            print(f"\n🔄 [{current_time}] Auto-update check...")
             
-            # Check if we can make HTTP API call (for fallback)
+            # Fetch today's matches to keep cache updated
             can_make, reason = hit_counter.can_make_request()
-            
-            # If WebSocket is not connected, use HTTP API
-            if not api_manager.websocket_connected:
-                print("⚠️ WebSocket disconnected, using HTTP API fallback...")
-                if can_make:
-                    matches = fetch_api_football_matches()
-                    if matches:
-                        api_manager.update_api_football_matches(matches)
-                else:
-                    print(f"⏸️ HTTP API call blocked: {reason}")
-            
-            # Smart wait time based on WebSocket status
-            if api_manager.websocket_connected:
-                wait_time = 30  # Quick checks when WebSocket is active
-            elif hit_counter.daily_hits >= 80:
-                wait_time = 600  # 10 minutes if high usage
-            elif hit_counter.daily_hits >= 50:
-                wait_time = 300  # 5 minutes if medium usage
+            if can_make:
+                raw_matches = fetch_todays_matches()
+                match_manager.update_matches(raw_matches)
+                print(f"✅ Auto-update: {len(raw_matches)} matches cached")
             else:
-                wait_time = 120  # 2 minutes if low usage
+                print(f"⏸️ Auto-update skipped: {reason}")
             
-            print(f"⏰ Next update check in {wait_time} seconds...")
-            time.sleep(wait_time)
+            # Wait 10 minutes between updates
+            time.sleep(600)
             
         except Exception as e:
             print(f"❌ Auto-updater error: {e}")
@@ -1269,58 +812,45 @@ def auto_updater():
 # STARTUP FUNCTION
 # -------------------------
 def start_bot():
-    """Start the bot with dual API support"""
+    """Start the bot"""
     try:
-        print("🚀 Starting Enhanced Football Analysis Bot...")
+        print("🚀 Starting Today's Football Matches Bot...")
         
         # Start auto-updater
         updater_thread = threading.Thread(target=auto_updater, daemon=True)
         updater_thread.start()
-        print("✅ Dual-API Auto-Updater started!")
+        print("✅ Auto-Updater started!")
         
-        # Initial API test
-        print("🔍 Testing API connections...")
-        test_matches, source = fetch_live_matches_dual_api()
-        print(f"🔍 Initial load: {len(test_matches)} matches from {source}")
+        # Initial matches load
+        print("🔍 Loading today's matches...")
+        raw_matches = fetch_todays_matches()
+        match_manager.update_matches(raw_matches)
+        print(f"✅ Initial load: {len(raw_matches)} matches")
         
         # Send startup message
-        api_status = api_manager.get_api_status()
         startup_msg = f"""
-🤖 **ENHANCED FOOTBALL ANALYSIS BOT STARTED!**
+🤖 **آج کے فٹ بال میچز بوٹ شروع ہو گیا!**
 
-🔍 **NEW: Detailed Match Analysis Active**
+✅ **سسٹم ایکٹو:**
+• 📅 آج کے میچز: {len(match_manager.today_matches)}
+• 🔴 لائیو میچز: {len(match_manager.live_matches)}
+• 🕒 آنے والے میچز: {len(match_manager.upcoming_matches)}
 
-✅ **Dual API System Active:**
-• 🔴 WebSocket: {api_status['allsports_websocket']['status']}
-• 🔵 HTTP API: {api_status['api_football']['status']}
-• 🎯 Automatic Failover
-• 📊 Real-time Monitoring
+🔥 **ہٹ کاؤنٹر:**
+• آج کے ہٹس: {hit_counter.daily_hits}/100
+• ٹوٹل ہٹس: {hit_counter.total_hits}
 
-🌐 **Current Status:**
-• WebSocket Matches: {api_status['allsports_websocket']['match_count']}
-• HTTP API Matches: {api_status['api_football']['match_count']}
-• WebSocket Retries: {api_status['allsports_websocket']['retry_count']}
+🕒 **وقت:** {datetime.now().strftime('%Y-%m-%d %I:%M %p')}
 
-🔥 **Hit Counter Ready**
-📊 Today's Hits: {hit_counter.daily_hits}/100
-💾 Analysis System: Active
-
-🕒 **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-🌐 **Mode:** {'WEBHOOK' if USE_WEBHOOK else 'POLLING'}
-
-🚀 **Real-time analysis with perfect fallback!**
+🚀 **آج کے میچز دیکھنے کے لیے تیار!**
 """
         bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
         
-        # Start bot
-        if USE_WEBHOOK:
-            print("🌐 Starting in webhook mode...")
-            # Webhook setup code here
-        else:
-            print("🔄 Starting in polling mode...")
-            bot.remove_webhook()
-            time.sleep(1)
-            bot.infinity_polling()
+        # Start bot polling
+        print("🔄 Starting in polling mode...")
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.infinity_polling()
             
     except Exception as e:
         print(f"❌ Startup error: {e}")

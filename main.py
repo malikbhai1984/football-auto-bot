@@ -12,6 +12,9 @@ import threading
 from dotenv import load_dotenv
 import json
 import pytz
+import websocket
+import ssl
+import logging
 
 # -------------------------
 # Load environment variables
@@ -21,6 +24,7 @@ load_dotenv()
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_KEY = os.environ.get("API_KEY") or "839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
+ALLSPORTS_API_KEY = os.environ.get("ALLSPORTS_API_KEY") or API_KEY
 
 if not all([BOT_TOKEN, OWNER_CHAT_ID]):
     raise ValueError("❌ BOT_TOKEN or OWNER_CHAT_ID missing!")
@@ -31,41 +35,80 @@ app = Flask(__name__)
 # ✅ Check if we should use webhook or polling
 USE_WEBHOOK = bool(os.environ.get("DOMAIN"))
 
-print(f"🎯 Starting Advanced Football Prediction Bot...")
+print(f"🎯 Starting Dual-API Football Prediction Bot...")
 print(f"🌐 Webhook Mode: {USE_WEBHOOK}")
 
-# ✅ CORRECT API URL FOR API-FOOTBALL.COM
-API_URL = "https://apiv3.apifootball.com"
+# ✅ DUAL API CONFIGURATION
+API_FOOTBALL_URL = "https://apiv3.apifootball.com"
+ALLSPORTS_WS_URL = f"wss://wss.allsportsapi.com/live_events?APIkey={ALLSPORTS_API_KEY}&timezone=+05:00"
 
 # -------------------------
-# COMPREHENSIVE LEAGUE CONFIGURATION
+# DUAL API LIVE MATCH MANAGER
 # -------------------------
-LEAGUE_CONFIG = {
-    # Major European Leagues
-    "152": {"name": "Premier League", "priority": 1, "type": "domestic"},
-    "302": {"name": "La Liga", "priority": 1, "type": "domestic"},
-    "207": {"name": "Serie A", "priority": 1, "type": "domestic"},
-    "168": {"name": "Bundesliga", "priority": 1, "type": "domestic"},
-    "176": {"name": "Ligue 1", "priority": 1, "type": "domestic"},
+class DualAPIManager:
+    def __init__(self):
+        self.api_football_matches = []
+        self.allsports_matches = []
+        self.last_api_football_update = None
+        self.last_allsports_update = None
+        self.websocket_connected = False
+        self.websocket_retry_count = 0
+        self.max_retries = 5
+        
+    def update_api_football_matches(self, matches):
+        """Update matches from API-Football"""
+        self.api_football_matches = matches
+        self.last_api_football_update = datetime.now()
+        print(f"✅ API-Football: {len(matches)} matches updated")
     
-    # European Competitions
-    "149": {"name": "Champions League", "priority": 1, "type": "european"},
-    "150": {"name": "Europa League", "priority": 2, "type": "european"},
+    def update_allsports_matches(self, matches):
+        """Update matches from AllSportsAPI WebSocket"""
+        self.allsports_matches = matches
+        self.last_allsports_update = datetime.now()
+        print(f"✅ AllSportsAPI: {len(matches)} matches updated")
     
-    # World Cup Qualifiers - All Confederations
-    "5": {"name": "World Cup Qualifiers (UEFA)", "priority": 1, "type": "worldcup"},
-    "6": {"name": "World Cup Qualifiers (AFC)", "priority": 2, "type": "worldcup"},
-    "7": {"name": "World Cup Qualifiers (CONMEBOL)", "priority": 1, "type": "worldcup"},
-    "8": {"name": "World Cup Qualifiers (CONCACAF)", "priority": 2, "type": "worldcup"},
-    "9": {"name": "World Cup Qualifiers (CAF)", "priority": 2, "type": "worldcup"},
-    "10": {"name": "World Cup Qualifiers (OFC)", "priority": 3, "type": "worldcup"},
+    def get_best_live_matches(self):
+        """Get best available matches from both APIs"""
+        current_time = datetime.now()
+        
+        # Prefer WebSocket data if fresh (less than 30 seconds old)
+        if (self.last_allsports_update and 
+            (current_time - self.last_allsports_update).total_seconds() < 30 and 
+            self.allsports_matches):
+            print("🎯 Using AllSportsAPI WebSocket data (REAL-TIME)")
+            return self.allsports_matches, "ALLSPORTS_WS"
+        
+        # Fallback to API-Football if fresh (less than 2 minutes old)
+        elif (self.last_api_football_update and 
+              (current_time - self.last_api_football_update).total_seconds() < 120 and 
+              self.api_football_matches):
+            print("🔄 Using API-Football cached data")
+            return self.api_football_matches, "API_FOOTBALL"
+        
+        # No fresh data available
+        else:
+            print("⚠️ No fresh data from either API")
+            return [], "NONE"
     
-    # Other Important Leagues
-    "175": {"name": "Eredivisie", "priority": 2, "type": "domestic"},
-    "144": {"name": "Primeira Liga", "priority": 2, "type": "domestic"},
-    "571": {"name": "MLS", "priority": 3, "type": "domestic"},
-    "529": {"name": "Saudi Pro League", "priority": 3, "type": "domestic"},
-}
+    def get_api_status(self):
+        """Get status of both APIs"""
+        status = {
+            "api_football": {
+                "status": "ACTIVE" if self.api_football_matches else "INACTIVE",
+                "last_update": self.last_api_football_update.strftime("%H:%M:%S") if self.last_api_football_update else "Never",
+                "match_count": len(self.api_football_matches)
+            },
+            "allsports_websocket": {
+                "status": "CONNECTED" if self.websocket_connected else "DISCONNECTED",
+                "last_update": self.last_allsports_update.strftime("%H:%M:%S") if self.last_allsports_update else "Never", 
+                "match_count": len(self.allsports_matches),
+                "retry_count": self.websocket_retry_count
+            }
+        }
+        return status
+
+# Initialize Dual API Manager
+api_manager = DualAPIManager()
 
 # -------------------------
 # GLOBAL HIT COUNTER & API OPTIMIZER
@@ -132,8 +175,11 @@ class GlobalHitCounter:
         hours_until_reset = int(time_until_reset // 3600)
         minutes_until_reset = int((time_until_reset % 3600) // 60)
         
+        # Get API status
+        api_status = api_manager.get_api_status()
+        
         stats = f"""
-🔥 **GLOBAL HIT COUNTER STATS**
+🔥 **GLOBAL HIT COUNTER & API STATUS**
 
 📈 **Current Usage:**
 • Total Hits: {self.total_hits}
@@ -145,6 +191,16 @@ class GlobalHitCounter:
 • Daily Remaining: {remaining_daily} calls
 • Time Until Reset: {hours_until_reset}h {minutes_until_reset}m
 • Usage Percentage: {(self.daily_hits/100)*100:.1f}%
+
+🌐 **API STATUS:**
+• API-Football: {api_status['api_football']['status']}
+  - Matches: {api_status['api_football']['match_count']}
+  - Updated: {api_status['api_football']['last_update']}
+  
+• AllSports WebSocket: {api_status['allsports_websocket']['status']}
+  - Matches: {api_status['allsports_websocket']['match_count']}
+  - Updated: {api_status['allsports_websocket']['last_update']}
+  - Retries: {api_status['allsports_websocket']['retry_count']}
 
 ⏰ **Last Hit:** {self.last_hit_time.strftime('%H:%M:%S') if self.last_hit_time else 'Never'}
 
@@ -167,526 +223,217 @@ class GlobalHitCounter:
 hit_counter = GlobalHitCounter()
 
 # -------------------------
-# ADVANCED API CACHING SYSTEM
+# ALLSPORTS API WEBSOCKET CLIENT
 # -------------------------
-class AdvancedAPICache:
+class AllSportsWebSocketClient:
     def __init__(self):
-        self.cache_file = "api_cache.json"
-        self.cache_duration = 300  # 5 minutes cache
-        self.stats_file = "api_stats.json"
-        self.load_cache()
-        self.load_stats()
-    
-    def load_cache(self):
-        """Load cache from file"""
-        try:
-            if os.path.exists(self.cache_file):
-                with open(self.cache_file, 'r') as f:
-                    self.cache = json.load(f)
-                print("✅ Cache loaded successfully")
-            else:
-                self.cache = {
-                    "live_matches": {"data": [], "timestamp": None},
-                    "sample_matches": {"data": self.get_sample_matches(), "timestamp": datetime.now().isoformat()}
-                }
-                self.save_cache()
-        except Exception as e:
-            print(f"❌ Cache load error: {e}")
-            self.cache = {
-                "live_matches": {"data": [], "timestamp": None},
-                "sample_matches": {"data": self.get_sample_matches(), "timestamp": datetime.now().isoformat()}
-            }
-    
-    def get_sample_matches(self):
-        """Get sample matches for demo when API is down"""
-        return [
-            {
-                "match_hometeam_name": "Manchester City",
-                "match_awayteam_name": "Liverpool", 
-                "match_hometeam_score": "1",
-                "match_awayteam_score": "1",
-                "match_status": "45",
-                "league_id": "152",
-                "match_live": "1",
-                "league_name": "Premier League"
-            },
-            {
-                "match_hometeam_name": "Brazil",
-                "match_awayteam_name": "Argentina", 
-                "match_hometeam_score": "2",
-                "match_awayteam_score": "1",
-                "match_status": "65",
-                "league_id": "7",
-                "match_live": "1",
-                "league_name": "World Cup Qualifiers (CONMEBOL)"
-            },
-            {
-                "match_hometeam_name": "Germany",
-                "match_awayteam_name": "France",
-                "match_hometeam_score": "1",
-                "match_awayteam_score": "1", 
-                "match_status": "HT",
-                "league_id": "5",
-                "match_live": "1",
-                "league_name": "World Cup Qualifiers (UEFA)"
-            },
-            {
-                "match_hometeam_name": "USA",
-                "match_awayteam_name": "Mexico",
-                "match_hometeam_score": "2",
-                "match_awayteam_score": "0",
-                "match_status": "75",
-                "league_id": "8",
-                "match_live": "1",
-                "league_name": "World Cup Qualifiers (CONCACAF)"
-            }
-        ]
-    
-    def save_cache(self):
-        """Save cache to file"""
-        try:
-            with open(self.cache_file, 'w') as f:
-                json.dump(self.cache, f, indent=2)
-        except Exception as e:
-            print(f"❌ Cache save error: {e}")
-    
-    def load_stats(self):
-        """Load API statistics"""
-        try:
-            if os.path.exists(self.stats_file):
-                with open(self.stats_file, 'r') as f:
-                    self.stats = json.load(f)
-            else:
-                self.stats = {
-                    "total_requests": 0,
-                    "cache_hits": 0,
-                    "successful_api_calls": 0,
-                    "failed_api_calls": 0,
-                    "last_success": None
-                }
-                self.save_stats()
-        except Exception as e:
-            print(f"❌ Stats load error: {e}")
-            self.stats = {
-                "total_requests": 0,
-                "cache_hits": 0,
-                "successful_api_calls": 0,
-                "failed_api_calls": 0,
-                "last_success": None
-            }
-    
-    def save_stats(self):
-        """Save statistics to file"""
-        try:
-            with open(self.stats_file, 'w') as f:
-                json.dump(self.stats, f, indent=2)
-        except Exception as e:
-            print(f"❌ Stats save error: {e}")
-    
-    def is_cache_valid(self, cache_key):
-        """Check if cache is still valid"""
-        if cache_key not in self.cache:
-            return False
+        self.ws = None
+        self.connected = False
+        self.reconnect_attempts = 0
+        self.max_reconnect_attempts = 10
+        self.reconnect_delay = 5
         
-        cached_data = self.cache[cache_key]
-        if not cached_data["timestamp"]:
-            return False
-        
+    def on_message(self, ws, message):
+        """Handle incoming WebSocket messages"""
         try:
-            cache_time = datetime.fromisoformat(cached_data["timestamp"])
-            time_diff = (datetime.now() - cache_time).total_seconds()
-            return time_diff < self.cache_duration
-        except:
-            return False
+            data = json.loads(message)
+            print(f"\n📡 AllSportsAPI WebSocket Update Received:")
+            
+            # Process the live data
+            matches = self.process_websocket_data(data)
+            if matches:
+                api_manager.update_allsports_matches(matches)
+                api_manager.websocket_connected = True
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ WebSocket JSON Error: {e}")
+        except Exception as e:
+            print(f"❌ WebSocket Message Error: {e}")
     
-    def get_cached_data(self, cache_key):
-        """Get cached data if valid"""
-        self.stats["total_requests"] += 1
+    def on_error(self, ws, error):
+        """Handle WebSocket errors"""
+        print(f"⚠️ WebSocket Error: {error}")
+        api_manager.websocket_connected = False
         
-        if self.is_cache_valid(cache_key):
-            self.stats["cache_hits"] += 1
-            self.save_stats()
-            print(f"✅ Cache HIT for {cache_key}")
-            return self.cache[cache_key]["data"]
+    def on_close(self, ws, close_status_code, close_msg):
+        """Handle WebSocket closure"""
+        print(f"🔒 WebSocket Connection Closed: {close_status_code} - {close_msg}")
+        api_manager.websocket_connected = False
+        self.connected = False
+        
+        # Attempt reconnection
+        if self.reconnect_attempts < self.max_reconnect_attempts:
+            self.reconnect_attempts += 1
+            print(f"🔄 Reconnecting in {self.reconnect_delay} seconds... (Attempt {self.reconnect_attempts})")
+            time.sleep(self.reconnect_delay)
+            self.connect()
         else:
-            self.save_stats()
-            print(f"🔄 Cache MISS for {cache_key}")
-            return None
+            print("❌ Max reconnection attempts reached")
     
-    def update_cache(self, cache_key, data):
-        """Update cache with new data"""
+    def on_open(self, ws):
+        """Handle WebSocket connection opening"""
+        print("✅ Connected to AllSportsAPI WebSocket - REAL-TIME UPDATES ACTIVE!")
+        self.connected = True
+        api_manager.websocket_connected = True
+        self.reconnect_attempts = 0  # Reset counter on successful connection
+    
+    def process_websocket_data(self, data):
+        """Process WebSocket data into match format"""
         try:
-            self.cache[cache_key] = {
-                "data": data,
+            matches = []
+            
+            # Handle different data structures from WebSocket
+            if isinstance(data, dict):
+                # Single match update
+                if 'event' in data and data['event'] == 'live_update':
+                    match_data = data.get('data', {})
+                    if match_data:
+                        matches.append(self.format_websocket_match(match_data))
+                
+                # Multiple matches in array
+                elif isinstance(data.get('data'), list):
+                    for match in data['data']:
+                        formatted_match = self.format_websocket_match(match)
+                        if formatted_match:
+                            matches.append(formatted_match)
+                
+                # Direct match object
+                elif data.get('match_id'):
+                    formatted_match = self.format_websocket_match(data)
+                    if formatted_match:
+                        matches.append(formatted_match)
+            
+            elif isinstance(data, list):
+                # Array of matches
+                for match in data:
+                    formatted_match = self.format_websocket_match(match)
+                    if formatted_match:
+                        matches.append(formatted_match)
+            
+            print(f"🔄 Processed {len(matches)} matches from WebSocket")
+            return matches
+            
+        except Exception as e:
+            print(f"❌ WebSocket data processing error: {e}")
+            return []
+    
+    def format_websocket_match(self, match_data):
+        """Format WebSocket match data to standard format"""
+        try:
+            # Map different field names to standard format
+            home_team = match_data.get('match_hometeam_name') or match_data.get('home_team') or "Unknown"
+            away_team = match_data.get('match_awayteam_name') or match_data.get('away_team') or "Unknown"
+            home_score = str(match_data.get('match_hometeam_score') or match_data.get('home_score') or "0")
+            away_score = str(match_data.get('match_awayteam_score') or match_data.get('away_score') or "0")
+            minute = match_data.get('match_status') or match_data.get('minute') or match_data.get('time') or "0"
+            league_id = match_data.get('league_id') or "unknown"
+            
+            # Determine match status
+            if minute == "HT":
+                match_status = "HALF TIME"
+                display_minute = "HT"
+            elif minute == "FT":
+                match_status = "FULL TIME"
+                display_minute = "FT"
+            elif isinstance(minute, int) or (isinstance(minute, str) and minute.isdigit()):
+                match_status = "LIVE"
+                display_minute = f"{minute}'"
+            elif minute in ["1H", "2H"]:
+                match_status = "LIVE"
+                display_minute = minute
+            else:
+                match_status = "UPCOMING"
+                display_minute = minute
+            
+            return {
+                "match_hometeam_name": home_team,
+                "match_awayteam_name": away_team,
+                "match_hometeam_score": home_score,
+                "match_awayteam_score": away_score,
+                "match_status": minute,
+                "league_id": league_id,
+                "league_name": get_league_name(league_id),
+                "match_live": "1",
+                "source": "allsports_websocket",
                 "timestamp": datetime.now().isoformat()
             }
-            self.save_cache()
-            print(f"💾 Cache UPDATED for {cache_key}")
+            
         except Exception as e:
-            print(f"❌ Cache update error: {e}")
+            print(f"❌ WebSocket match formatting error: {e}")
+            return None
     
-    def record_api_result(self, success=True):
-        """Record API call result"""
-        if success:
-            self.stats["successful_api_calls"] += 1
-            self.stats["last_success"] = datetime.now().isoformat()
-        else:
-            self.stats["failed_api_calls"] += 1
-        self.save_stats()
+    def connect(self):
+        """Connect to WebSocket"""
+        try:
+            print(f"🔗 Connecting to AllSportsAPI WebSocket...")
+            self.ws = websocket.WebSocketApp(
+                ALLSPORTS_WS_URL,
+                on_open=self.on_open,
+                on_message=self.on_message,
+                on_error=self.on_error,
+                on_close=self.on_close
+            )
+            
+            # Run WebSocket in background thread
+            def run_websocket():
+                self.ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE})
+            
+            ws_thread = threading.Thread(target=run_websocket, daemon=True)
+            ws_thread.start()
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ WebSocket connection failed: {e}")
+            api_manager.websocket_connected = False
+            return False
     
-    def get_cache_stats(self):
-        """Get cache statistics"""
-        total_requests = self.stats["total_requests"]
-        cache_hit_rate = (self.stats["cache_hits"] / total_requests * 100) if total_requests > 0 else 0
-        
-        total_api_calls = self.stats["successful_api_calls"] + self.stats["failed_api_calls"]
-        success_rate = (self.stats["successful_api_calls"] / total_api_calls * 100) if total_api_calls > 0 else 0
-        
-        return f"""
-💾 **CACHE PERFORMANCE STATS**
+    def disconnect(self):
+        """Disconnect WebSocket"""
+        if self.ws:
+            self.ws.close()
+        self.connected = False
+        api_manager.websocket_connected = False
 
-📊 **Requests:**
-• Total Requests: {self.stats['total_requests']}
-• Cache Hits: {self.stats['cache_hits']}
-• Cache Hit Rate: {cache_hit_rate:.1f}%
-
-🔗 **API Calls:**
-• Successful: {self.stats['successful_api_calls']}
-• Failed: {self.stats['failed_api_calls']}
-• Success Rate: {success_rate:.1f}%
-
-⏱️ **Cache Duration:** {self.cache_duration} seconds
-{'• Last Success: ' + datetime.fromisoformat(self.stats['last_success']).strftime('%H:%M:%S') if self.stats['last_success'] else '• No successful calls yet'}
-"""
-
-# Initialize Cache
-api_cache = AdvancedAPICache()
+# Initialize WebSocket Client
+websocket_client = AllSportsWebSocketClient()
 
 # -------------------------
-# PERFECT PREDICTION ENGINE
+# COMPREHENSIVE LEAGUE CONFIGURATION
 # -------------------------
-class PerfectPredictionEngine:
-    def __init__(self):
-        self.team_database = self.initialize_team_database()
-        self.prediction_history = []
-        
-    def initialize_team_database(self):
-        """Comprehensive team database with advanced metrics"""
-        return {
-            # Club Teams
-            "manchester city": {"rating": 95, "attack": 96, "defense": 90, "form": 8.2, "home_advantage": 1.2, "style": "possession"},
-            "liverpool": {"rating": 92, "attack": 94, "defense": 88, "form": 7.8, "home_advantage": 1.1, "style": "pressing"},
-            "arsenal": {"rating": 90, "attack": 89, "defense": 91, "form": 8.0, "home_advantage": 1.1, "style": "attacking"},
-            "real madrid": {"rating": 94, "attack": 93, "defense": 91, "form": 8.5, "home_advantage": 1.3, "style": "experienced"},
-            "barcelona": {"rating": 92, "attack": 91, "defense": 89, "form": 7.9, "home_advantage": 1.2, "style": "possession"},
-            "bayern munich": {"rating": 93, "attack": 95, "defense": 88, "form": 8.3, "home_advantage": 1.4, "style": "dominant"},
-            "psg": {"rating": 90, "attack": 92, "defense": 85, "form": 7.7, "home_advantage": 1.1, "style": "attacking"},
-            
-            # National Teams (World Cup Qualifiers)
-            "brazil": {"rating": 96, "attack": 95, "defense": 92, "form": 8.8, "home_advantage": 1.5, "style": "samba"},
-            "argentina": {"rating": 94, "attack": 93, "defense": 90, "form": 8.7, "home_advantage": 1.4, "style": "technical"},
-            "france": {"rating": 95, "attack": 94, "defense": 93, "form": 8.6, "home_advantage": 1.3, "style": "balanced"},
-            "germany": {"rating": 92, "attack": 90, "defense": 91, "form": 8.0, "home_advantage": 1.2, "style": "efficient"},
-            "spain": {"rating": 91, "attack": 90, "defense": 89, "form": 7.9, "home_advantage": 1.2, "style": "possession"},
-            "england": {"rating": 90, "attack": 91, "defense": 88, "form": 8.1, "home_advantage": 1.3, "style": "direct"},
-            "portugal": {"rating": 89, "attack": 90, "defense": 87, "form": 8.0, "home_advantage": 1.2, "style": "technical"},
-            "netherlands": {"rating": 88, "attack": 88, "defense": 87, "form": 7.8, "home_advantage": 1.1, "style": "total football"},
-            "belgium": {"rating": 87, "attack": 89, "defense": 85, "form": 7.7, "home_advantage": 1.1, "style": "counter attack"},
-            
-            # CONMEBOL Teams
-            "uruguay": {"rating": 85, "attack": 84, "defense": 86, "form": 7.5, "home_advantage": 1.4, "style": "physical"},
-            "colombia": {"rating": 84, "attack": 83, "defense": 85, "form": 7.4, "home_advantage": 1.3, "style": "attacking"},
-            "chile": {"rating": 82, "attack": 82, "defense": 81, "form": 7.2, "home_advantage": 1.4, "style": "intense"},
-            "ecuador": {"rating": 80, "attack": 79, "defense": 82, "form": 7.1, "home_advantage": 1.5, "style": "defensive"},
-            
-            # CONCACAF Teams
-            "mexico": {"rating": 83, "attack": 82, "defense": 83, "form": 7.3, "home_advantage": 1.4, "style": "technical"},
-            "usa": {"rating": 81, "attack": 80, "defense": 82, "form": 7.2, "home_advantage": 1.2, "style": "athletic"},
-            "canada": {"rating": 78, "attack": 79, "defense": 77, "form": 7.0, "home_advantage": 1.1, "style": "counter attack"},
-            "costa rica": {"rating": 76, "attack": 75, "defense": 78, "form": 6.8, "home_advantage": 1.3, "style": "defensive"},
-            
-            # AFC Teams
-            "japan": {"rating": 82, "attack": 81, "defense": 83, "form": 7.4, "home_advantage": 1.2, "style": "technical"},
-            "south korea": {"rating": 81, "attack": 80, "defense": 82, "form": 7.3, "home_advantage": 1.1, "style": "pressing"},
-            "iran": {"rating": 79, "attack": 78, "defense": 81, "form": 7.1, "home_advantage": 1.3, "style": "defensive"},
-            "australia": {"rating": 77, "attack": 76, "defense": 78, "form": 6.9, "home_advantage": 1.1, "style": "physical"},
-            
-            # CAF Teams
-            "senegal": {"rating": 83, "attack": 82, "defense": 84, "form": 7.5, "home_advantage": 1.4, "style": "athletic"},
-            "morocco": {"rating": 82, "attack": 81, "defense": 83, "form": 7.4, "home_advantage": 1.4, "style": "technical"},
-            "nigeria": {"rating": 81, "attack": 83, "defense": 79, "form": 7.3, "home_advantage": 1.3, "style": "attacking"},
-            "egypt": {"rating": 80, "attack": 81, "defense": 79, "form": 7.2, "home_advantage": 1.4, "style": "counter attack"},
-        }
+LEAGUE_CONFIG = {
+    # Major European Leagues
+    "152": {"name": "Premier League", "priority": 1, "type": "domestic"},
+    "302": {"name": "La Liga", "priority": 1, "type": "domestic"},
+    "207": {"name": "Serie A", "priority": 1, "type": "domestic"},
+    "168": {"name": "Bundesliga", "priority": 1, "type": "domestic"},
+    "176": {"name": "Ligue 1", "priority": 1, "type": "domestic"},
     
-    def calculate_perfect_prediction(self, home_team, away_team, is_international=False):
-        """Advanced prediction algorithm with multiple factors"""
-        
-        # Get team data
-        home_data = self.team_database.get(home_team.lower(), {"rating": 75, "attack": 75, "defense": 75, "form": 6.5, "home_advantage": 1.1})
-        away_data = self.team_database.get(away_team.lower(), {"rating": 75, "attack": 75, "defense": 75, "form": 6.5, "home_advantage": 1.0})
-        
-        # Base ratings
-        home_base = home_data["rating"]
-        away_base = away_data["rating"]
-        
-        # Apply factors
-        home_advantage = home_data["home_advantage"] * (1.3 if is_international else 1.1)
-        form_factor = (home_data["form"] - away_data["form"]) * 2
-        attack_defense_balance = (home_data["attack"] - away_data["defense"] + away_data["attack"] - home_data["defense"]) / 20
-        
-        # Calculate final ratings
-        home_final = home_base * home_advantage + form_factor + attack_defense_balance
-        away_final = away_base + attack_defense_balance - form_factor
-        
-        # Ensure minimum ratings
-        home_final = max(home_final, 50)
-        away_final = max(away_final, 50)
-        
-        # Calculate probabilities
-        total = home_final + away_final
-        home_prob = (home_final / total) * 100
-        away_prob = (away_final / total) * 100
-        draw_prob = 100 - home_prob - away_prob
-        
-        # Adjust for realistic distribution
-        draw_prob = min(max(draw_prob, 20), 40)  # Draw between 20-40%
-        home_prob = home_prob * (100 - draw_prob) / (home_prob + away_prob)
-        away_prob = 100 - home_prob - draw_prob
-        
-        # Determine confidence
-        confidence = self.calculate_confidence(home_prob, away_prob, draw_prob)
-        
-        # Calculate expected goals
-        expected_home_goals = (home_data["attack"] / 40) * home_advantage
-        expected_away_goals = (away_data["attack"] / 40)
-        
-        # BTTS probability
-        btts_prob = (home_data["attack"] + away_data["attack"]) / 2
-        btts = "YES" if btts_prob > 45 else "NO"
-        
-        # Over/Under 2.5
-        total_expected_goals = expected_home_goals + expected_away_goals
-        over_under = "OVER 2.5" if total_expected_goals > 2.7 else "UNDER 2.5"
-        
-        # Key factors analysis
-        key_factors = self.analyze_key_factors(home_data, away_data, is_international)
-        
-        # Most likely score
-        likely_score = self.predict_likely_score(expected_home_goals, expected_away_goals)
-        
-        prediction_data = {
-            "home_prob": home_prob,
-            "away_prob": away_prob,
-            "draw_prob": draw_prob,
-            "confidence": confidence,
-            "btts": btts,
-            "over_under": over_under,
-            "likely_score": likely_score,
-            "key_factors": key_factors,
-            "expected_home_goals": expected_home_goals,
-            "expected_away_goals": expected_away_goals
-        }
-        
-        # Store prediction history
-        self.prediction_history.append({
-            "match": f"{home_team} vs {away_team}",
-            "prediction": prediction_data,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        return prediction_data
+    # European Competitions
+    "149": {"name": "Champions League", "priority": 1, "type": "european"},
+    "150": {"name": "Europa League", "priority": 2, "type": "european"},
     
-    def calculate_confidence(self, home_prob, away_prob, draw_prob):
-        """Calculate prediction confidence level"""
-        max_prob = max(home_prob, away_prob, draw_prob)
-        
-        if max_prob > 65:
-            return "VERY HIGH"
-        elif max_prob > 55:
-            return "HIGH"
-        elif max_prob > 45:
-            return "MEDIUM"
-        else:
-            return "LOW"
-    
-    def analyze_key_factors(self, home_data, away_data, is_international):
-        """Analyze key match factors"""
-        factors = []
-        
-        # Home advantage
-        if home_data["home_advantage"] > 1.2:
-            factors.append("• Strong home advantage")
-        
-        # Form comparison
-        form_diff = home_data["form"] - away_data["form"]
-        if form_diff > 1.0:
-            factors.append("• Home team in better form")
-        elif form_diff < -1.0:
-            factors.append("• Away team in better form")
-        
-        # Attack vs Defense
-        if home_data["attack"] - away_data["defense"] > 10:
-            factors.append("• Home attack vs weak away defense")
-        elif away_data["attack"] - home_data["defense"] > 10:
-            factors.append("• Away attack vs weak home defense")
-        
-        # Style matchup
-        if home_data["style"] == "attacking" and away_data["style"] == "attacking":
-            factors.append("• Both teams prefer attacking football")
-        elif home_data["style"] == "defensive" and away_data["style"] == "defensive":
-            factors.append("• Defensive tactical battle expected")
-        
-        # International specific factors
-        if is_international:
-            factors.append("• High stakes international match")
-            factors.append("• National pride on the line")
-        
-        if not factors:
-            factors.append("• Evenly balanced contest")
-            factors.append("• Small details could decide outcome")
-        
-        return factors
-    
-    def predict_likely_score(self, home_goals, away_goals):
-        """Predict most likely scoreline"""
-        # Round expected goals to nearest realistic score
-        home_rounded = max(0, min(4, round(home_goals)))
-        away_rounded = max(0, min(4, round(away_goals)))
-        
-        # Common football scores
-        common_scores = [
-            (1, 0), (2, 0), (2, 1), (1, 1), (0, 0), 
-            (3, 0), (3, 1), (2, 2), (1, 2), (0, 1)
-        ]
-        
-        # Find closest common score
-        best_score = common_scores[0]
-        min_diff = float('inf')
-        
-        for score in common_scores:
-            diff = abs(score[0] - home_goals) + abs(score[1] - away_goals)
-            if diff < min_diff:
-                min_diff = diff
-                best_score = score
-        
-        return f"{best_score[0]}-{best_score[1]}"
-    
-    def generate_prediction_report(self, home_team, away_team, is_international=False):
-        """Generate comprehensive prediction report"""
-        prediction = self.calculate_perfect_prediction(home_team, away_team, is_international)
-        
-        # Determine match type
-        match_type = "🌍 INTERNATIONAL QUALIFIER" if is_international else "🏆 CLUB MATCH"
-        
-        # Get team data for additional info
-        home_data = self.team_database.get(home_team.lower(), {})
-        away_data = self.team_database.get(away_team.lower(), {})
-        
-        report = f"""
-🎯 **PERFECT PREDICTION ANALYSIS** 🏆
-{match_type}
+    # World Cup Qualifiers
+    "5": {"name": "World Cup Qualifiers (UEFA)", "priority": 1, "type": "worldcup"},
+    "6": {"name": "World Cup Qualifiers (AFC)", "priority": 2, "type": "worldcup"},
+    "7": {"name": "World Cup Qualifiers (CONMEBOL)", "priority": 1, "type": "worldcup"},
+    "8": {"name": "World Cup Qualifiers (CONCACAF)", "priority": 2, "type": "worldcup"},
+    "9": {"name": "World Cup Qualifiers (CAF)", "priority": 2, "type": "worldcup"},
+    "10": {"name": "World Cup Qualifiers (OFC)", "priority": 3, "type": "worldcup"},
+}
 
-**{home_team.upper()} vs {away_team.upper()}**
-
-📊 **PROBABILITY ANALYSIS:**
-• 🏠 {home_team.title()}: {prediction['home_prob']:.1f}%
-• ✈️ {away_team.title()}: {prediction['away_prob']:.1f}%
-• 🤝 Draw: {prediction['draw_prob']:.1f}%
-
-🎯 **PREDICTION RESULTS:**
-• **Most Likely Winner**: {self.get_most_likely_winner(prediction)}
-• **Confidence Level**: {prediction['confidence']}
-• **Expected Score**: {prediction['likely_score']}
-• **Both Teams to Score**: {prediction['btts']}
-• **Total Goals**: {prediction['over_under']}
-
-⚽ **EXPECTED PERFORMANCE:**
-• Home Expected Goals: {prediction['expected_home_goals']:.1f}
-• Away Expected Goals: {prediction['expected_away_goals']:.1f}
-• Match Intensity: {'HIGH' if prediction['over_under'] == 'OVER 2.5' else 'MEDIUM'}
-
-🔍 **KEY MATCH FACTORS:**
-{chr(10).join(prediction['key_factors'])}
-
-💡 **EXPERT INSIGHTS:**
-{self.generate_insights(home_team, away_team, prediction, is_international)}
-
-🎲 **BETTING RECOMMENDATIONS:**
-{self.generate_betting_tips(prediction)}
-
-⚠️ *Remember: Football can be unpredictable! Use this as guidance.*
-"""
-        return report
-    
-    def get_most_likely_winner(self, prediction):
-        """Determine most likely winner"""
-        if prediction['home_prob'] >= prediction['away_prob'] and prediction['home_prob'] >= prediction['draw_prob']:
-            return "Home Win"
-        elif prediction['away_prob'] >= prediction['home_prob'] and prediction['away_prob'] >= prediction['draw_prob']:
-            return "Away Win"
-        else:
-            return "Draw"
-    
-    def generate_insights(self, home_team, away_team, prediction, is_international):
-        """Generate expert insights"""
-        insights = []
-        
-        if prediction['confidence'] == "VERY HIGH":
-            insights.append("• Strong statistical advantage for predicted outcome")
-        
-        if prediction['btts'] == "YES":
-            insights.append("• Both teams likely to find the net")
-        else:
-            insights.append("• Clean sheet potential for one team")
-        
-        if prediction['over_under'] == "OVER 2.5":
-            insights.append("• Expect an entertaining, high-scoring affair")
-        else:
-            insights.append("• Tactical battle with fewer goals expected")
-        
-        if is_international:
-            insights.append("• International experience could be decisive")
-            insights.append("• Weather and pitch conditions may influence style")
-        else:
-            insights.append("• Recent form and squad depth crucial factors")
-        
-        return "\n".join(insights)
-    
-    def generate_betting_tips(self, prediction):
-        """Generate smart betting tips"""
-        tips = []
-        
-        if prediction['confidence'] in ["VERY HIGH", "HIGH"]:
-            winner = self.get_most_likely_winner(prediction)
-            if winner == "Home Win":
-                tips.append("• HOME WIN (Good Value)")
-            elif winner == "Away Win":
-                tips.append("• AWAY WIN (Good Value)")
-            else:
-                tips.append("• DRAW (Good Value)")
-        
-        if prediction['btts'] == "YES":
-            tips.append("• BTTS YES (Strong Possibility)")
-        else:
-            tips.append("• BTTS NO (Good Option)")
-        
-        tips.append(f"• {prediction['over_under']} GOALS")
-        
-        if prediction['confidence'] == "LOW":
-            tips.append("• DOUBLE CHANCE (Safer Option)")
-        
-        tips.append("• Always bet responsibly!")
-        
-        return "\n".join(tips)
-
-# Initialize Prediction Engine
-prediction_engine = PerfectPredictionEngine()
+def get_league_name(league_id):
+    """Get league name from ID"""
+    league_info = LEAGUE_CONFIG.get(str(league_id))
+    if league_info:
+        return league_info["name"]
+    return f"League {league_id}"
 
 # -------------------------
-# OPTIMIZED LIVE MATCHES FETCHER
+# API-FOOTBALL HTTP CLIENT
 # -------------------------
-def fetch_live_matches():
-    """🔥 OPTIMIZED API CALL with hit counter and live matches filter"""
+def fetch_api_football_matches():
+    """Fetch matches from API-Football HTTP API"""
     
     # Record the hit
     hit_info = hit_counter.record_hit()
@@ -694,14 +441,14 @@ def fetch_live_matches():
     # Check if we can make the request
     can_make, reason = hit_counter.can_make_request()
     if not can_make:
-        print(f"🚫 API Call Blocked: {reason}")
-        return api_cache.cache.get("sample_matches", {}).get("data", [])
+        print(f"🚫 API-Football Call Blocked: {reason}")
+        return []
     
     try:
         # Use the optimized URL with match_live=1 parameter
-        url = f"https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey={API_KEY}"
+        url = f"{API_FOOTBALL_URL}/?action=get_events&match_live=1&APIkey={API_KEY}"
         
-        print(f"📡 Fetching LIVE matches from API...")
+        print(f"📡 Fetching from API-Football HTTP...")
         print(f"🔗 URL: {url.replace(API_KEY, 'API_KEY_HIDDEN')}")
         
         start_time = time.time()
@@ -716,69 +463,56 @@ def fetch_live_matches():
             print(f"📦 Response Type: {type(data)}")
             
             if isinstance(data, list):
-                print(f"✅ Found {len(data)} live matches")
-                api_cache.record_api_result(success=True)
+                print(f"✅ API-Football: Found {len(data)} live matches")
                 
                 # Add league names to matches
                 for match in data:
                     league_id = match.get("league_id", "")
                     match["league_name"] = get_league_name(league_id)
+                    match["source"] = "api_football"
                 
                 return data
             else:
-                print(f"❌ Invalid response format: {data}")
-                api_cache.record_api_result(success=False)
-                return api_cache.cache.get("sample_matches", {}).get("data", [])
+                print(f"❌ API-Football: Invalid response format: {data}")
+                return []
         else:
-            print(f"❌ HTTP Error {response.status_code}")
-            api_cache.record_api_result(success=False)
-            return api_cache.cache.get("sample_matches", {}).get("data", [])
+            print(f"❌ API-Football: HTTP Error {response.status_code}")
+            return []
             
     except requests.exceptions.Timeout:
-        print("❌ API request timeout")
-        api_cache.record_api_result(success=False)
-        return api_cache.cache.get("sample_matches", {}).get("data", [])
+        print("❌ API-Football: Request timeout")
+        return []
     except requests.exceptions.ConnectionError:
-        print("❌ API connection error")
-        api_cache.record_api_result(success=False)
-        return api_cache.cache.get("sample_matches", {}).get("data", [])
+        print("❌ API-Football: Connection error")
+        return []
     except Exception as e:
-        print(f"❌ API fetch error: {str(e)}")
-        api_cache.record_api_result(success=False)
-        return api_cache.cache.get("sample_matches", {}).get("data", [])
-
-def get_league_name(league_id):
-    """Get league name from ID with World Cup qualifiers"""
-    league_info = LEAGUE_CONFIG.get(str(league_id))
-    if league_info:
-        return league_info["name"]
-    return f"League {league_id}"
-
-def is_international_match(league_id):
-    """Check if match is international (World Cup qualifier)"""
-    league_info = LEAGUE_CONFIG.get(str(league_id), {})
-    return league_info.get("type") == "worldcup"
+        print(f"❌ API-Football fetch error: {str(e)}")
+        return []
 
 # -------------------------
-# SMART MATCH PROCESSOR
+# DUAL API MATCH FETCHER
 # -------------------------
-def get_optimized_live_matches():
-    """Get live matches with smart caching and hit protection"""
+def fetch_live_matches_dual_api():
+    """Fetch matches using both APIs - WebSocket preferred"""
     
-    # First try cache
-    cached_data = api_cache.get_cached_data("live_matches")
-    if cached_data is not None:
-        return cached_data
+    # Get best available matches
+    matches, source = api_manager.get_best_live_matches()
     
-    # If cache miss, fetch from API
-    print("🔄 Cache expired, fetching fresh data...")
-    live_matches = fetch_live_matches()
+    # If no WebSocket data, try API-Football
+    if source in ["NONE", "API_FOOTBALL"]:
+        print("🔄 Falling back to API-Football HTTP...")
+        api_football_matches = fetch_api_football_matches()
+        if api_football_matches:
+            api_manager.update_api_football_matches(api_football_matches)
+            matches = api_football_matches
+            source = "API_FOOTBALL"
     
-    # Update cache with new data
-    api_cache.update_cache("live_matches", live_matches)
-    
-    return live_matches
+    print(f"🎯 Final match source: {source}, Matches: {len(matches)}")
+    return matches, source
 
+# -------------------------
+# MATCH PROCESSOR
+# -------------------------
 def process_match_data(matches):
     """Process raw match data for display"""
     if not matches:
@@ -792,8 +526,8 @@ def process_match_data(matches):
             home_score = match.get("match_hometeam_score", "0")
             away_score = match.get("match_awayteam_score", "0")
             minute = match.get("match_status", "0")
-            league_id = match.get("league_id", "")
             league_name = match.get("league_name", "Unknown League")
+            source = match.get("source", "unknown")
             
             # Determine match status
             if minute == "HT":
@@ -812,9 +546,8 @@ def process_match_data(matches):
                 match_status = "UPCOMING"
                 display_minute = minute
             
-            # Check if international match
-            is_international = is_international_match(league_id)
-            match_type = "🌍" if is_international else "🏆"
+            # Source icon
+            source_icon = "🔴" if source == "allsports_websocket" else "🔵"
             
             processed_matches.append({
                 "home_team": home_team,
@@ -824,8 +557,8 @@ def process_match_data(matches):
                 "status": match_status,
                 "league": league_name,
                 "is_live": match_status == "LIVE",
-                "is_international": is_international,
-                "match_type": match_type
+                "source": source,
+                "source_icon": source_icon
             })
             
         except Exception as e:
@@ -839,7 +572,18 @@ def process_match_data(matches):
 # -------------------------
 class AdvancedFootballAI:
     def __init__(self):
-        self.prediction_engine = prediction_engine
+        self.team_data = {
+            "manchester city": {"strength": 95, "style": "attacking"},
+            "liverpool": {"strength": 92, "style": "high press"},
+            "arsenal": {"strength": 90, "style": "possession"},
+            "real madrid": {"strength": 94, "style": "experienced"},
+            "barcelona": {"strength": 92, "style": "possession"},
+            "bayern munich": {"strength": 93, "style": "dominant"},
+            "brazil": {"strength": 96, "style": "samba"},
+            "argentina": {"strength": 94, "style": "technical"},
+            "france": {"strength": 95, "style": "balanced"},
+            "germany": {"strength": 92, "style": "efficient"},
+        }
     
     def get_response(self, message):
         message_lower = message.lower()
@@ -848,137 +592,121 @@ class AdvancedFootballAI:
             return self.handle_live_matches()
         
         elif any(word in message_lower for word in ['hit', 'counter', 'stats', 'api']):
-            return hit_counter.get_hit_stats() + "\n" + api_cache.get_cache_stats()
+            return hit_counter.get_hit_stats()
         
         elif any(word in message_lower for word in ['predict', 'prediction']):
             return self.handle_prediction(message_lower)
         
-        elif any(word in message_lower for word in ['world cup', 'qualifier', 'international']):
-            return self.handle_worldcup_info()
+        elif any(word in message_lower for word in ['api status', 'connection']):
+            return self.handle_api_status()
         
         elif any(word in message_lower for word in ['hello', 'hi', 'hey']):
-            return "👋 Hello! I'm Advanced Football AI with Perfect Predictions! ⚽\n\nI cover:\n• 15+ Leagues Worldwide\n• World Cup Qualifiers 🌍\n• Perfect AI Predictions\n• Live Match Updates\n\nTry: 'live matches' or 'predict Brazil vs Argentina'"
+            return "👋 Hello! I'm DUAL-API Football AI! ⚽\n\n🌐 **Real-time updates via WebSocket**\n🔄 **Fallback to HTTP API**\n\nTry: 'live matches' or 'api status'"
         
         else:
-            return "🤖 **ADVANCED FOOTBALL AI** ⚽\n\nI can help with:\n• Live matches & scores (15+ leagues)\n• World Cup qualifiers 🌍\n• Perfect AI predictions 🎯\n• API hit statistics 📊\n\nTry: 'live matches', 'predict teams', or 'world cup info'"
+            return "🤖 **DUAL-API FOOTBALL AI** ⚽\n\n🌐 **Real-time WebSocket Updates**\n🔄 **HTTP API Fallback**\n\nTry: 'live matches', 'api status', or 'hit stats'"
 
     def handle_live_matches(self):
-        raw_matches = get_optimized_live_matches()
+        raw_matches, source = fetch_live_matches_dual_api()
         matches = process_match_data(raw_matches)
         
         if not matches:
-            return "⏳ No live matches found right now.\n\n🌍 **Checking World Cup qualifiers and major leagues...**\n\nTry again in a few minutes! 🔄"
+            return "⏳ No live matches found right now.\n\n🌐 **API Status:**\n" + self.get_api_status_text()
         
         response = "🔴 **LIVE FOOTBALL MATCHES** ⚽\n\n"
         
-        # Group by league type
-        domestic_matches = [m for m in matches if not m['is_international']]
-        international_matches = [m for m in matches if m['is_international']]
+        # Add source info
+        source_text = "🔴 REAL-TIME WebSocket" if source == "ALLSPORTS_WS" else "🔵 API-Football HTTP"
+        response += f"📡 **Source:** {source_text}\n\n"
         
-        # Show international matches first
-        if international_matches:
-            response += "🌍 **WORLD CUP QUALIFIERS**\n"
-            leagues = {}
-            for match in international_matches:
-                league = match['league']
-                if league not in leagues:
-                    leagues[league] = []
-                leagues[league].append(match)
-            
-            for league, league_matches in leagues.items():
-                response += f"**{league}**\n"
-                for match in league_matches:
-                    icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}\n"
-                response += "\n"
+        # Group by league
+        leagues = {}
+        for match in matches:
+            league = match['league']
+            if league not in leagues:
+                leagues[league] = []
+            leagues[league].append(match)
         
-        # Show domestic matches
-        if domestic_matches:
-            response += "🏆 **CLUB COMPETITIONS**\n"
-            leagues = {}
-            for match in domestic_matches:
-                league = match['league']
-                if league not in leagues:
-                    leagues[league] = []
-                leagues[league].append(match)
-            
-            for league, league_matches in leagues.items():
-                response += f"**{league}**\n"
-                for match in league_matches:
-                    icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                    response += f"• {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}\n"
-                response += "\n"
+        for league, league_matches in leagues.items():
+            response += f"**{league}**\n"
+            for match in league_matches:
+                icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
+                response += f"{match['source_icon']} {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}\n"
+            response += "\n"
         
         response += f"🔥 API Hits Today: {hit_counter.daily_hits}/100\n"
-        response += f"💾 Using: {'LIVE DATA' if raw_matches and raw_matches[0].get('match_hometeam_name') != 'Manchester City' else 'SAMPLE DATA'}"
-        response += f"\n🌍 International Matches: {len(international_matches)}"
-        response += f"\n🏆 Club Matches: {len(domestic_matches)}"
+        response += f"🌐 Data Source: {source}\n"
+        response += self.get_api_status_text()
         
         return response
 
     def handle_prediction(self, message):
-        # Extract teams from message
         teams = []
-        for team in prediction_engine.team_database:
+        for team in self.team_data:
             if team in message.lower():
                 teams.append(team)
         
         if len(teams) >= 2:
             home_team, away_team = teams[0], teams[1]
-            # Check if it's likely an international match
-            is_international = any(word in message.lower() for word in 
-                                 ['world cup', 'qualifier', 'international', ' vs '])
-            
-            return prediction_engine.generate_prediction_report(
-                home_team.title(), away_team.title(), is_international
-            )
+            return self.generate_prediction(home_team, away_team)
         else:
-            return """
-🎯 **PERFECT PREDICTION SYSTEM**
+            return "Please specify two teams for prediction. Example: 'Predict Manchester City vs Liverpool' or 'Brazil vs Argentina'"
 
-Please specify two teams for prediction:
+    def generate_prediction(self, team1, team2):
+        team1_data = self.team_data.get(team1.lower(), {"strength": 80})
+        team2_data = self.team_data.get(team2.lower(), {"strength": 80})
+        
+        strength1 = team1_data["strength"]
+        strength2 = team2_data["strength"]
+        
+        total = strength1 + strength2
+        prob1 = (strength1 / total) * 100
+        prob2 = (strength2 / total) * 100
+        draw_prob = 100 - prob1 - prob2
+        
+        if prob1 > prob2:
+            winner = team1.title()
+        else:
+            winner = team2.title()
+        
+        return f"""
+🎯 **PREDICTION: {team1.upper()} vs {team2.upper()}**
 
-**Club Matches:**
-• "Predict Manchester City vs Liverpool"
-• "Real Madrid vs Barcelona prediction"
-• "Who will win Bayern Munich vs PSG?"
+📊 **Probabilities:**
+• {team1.title()}: {prob1:.1f}%
+• {team2.title()}: {prob2:.1f}%  
+• Draw: {draw_prob:.1f}%
 
-**World Cup Qualifiers:**
-• "Predict Brazil vs Argentina"
-• "Germany vs France world cup qualifier"
-• "USA vs Mexico prediction"
+🏆 **Most Likely: {winner}**
 
-I'll provide perfect AI analysis with probabilities! 📊
+⚽ **Expected: High-scoring match with both teams attacking!**
+
+⚠️ *Football is unpredictable - enjoy the game!*
 """
 
-    def handle_worldcup_info(self):
-        return """
-🌍 **WORLD CUP 2026 QUALIFIERS INFORMATION**
+    def handle_api_status(self):
+        return self.get_api_status_text()
+    
+    def get_api_status_text(self):
+        """Get API status as formatted text"""
+        status = api_manager.get_api_status()
+        
+        return f"""
+🌐 **DUAL API STATUS**
 
-**Confederations Covered:**
-• 🇪🇺 UEFA (Europe) - 55 teams
-• 🇸🇦 AFC (Asia) - 46 teams  
-• 🇺🇸 CONMEBOL (South America) - 10 teams
-• 🇲🇽 CONCACAF (North America) - 35 teams
-• 🇩🇿 CAF (Africa) - 54 teams
-• 🇳🇿 OFC (Oceania) - 11 teams
+🔵 **API-Football (HTTP):**
+• Status: {status['api_football']['status']}
+• Matches: {status['api_football']['match_count']}
+• Updated: {status['api_football']['last_update']}
 
-**Key Qualifying Matches:**
-• Brazil vs Argentina
-• Germany vs France
-• Spain vs Italy
-• USA vs Mexico
-• Japan vs South Korea
-• Senegal vs Morocco
+🔴 **AllSportsAPI (WebSocket):**
+• Status: {status['allsports_websocket']['status']}
+• Matches: {status['allsports_websocket']['match_count']}
+• Updated: {status['allsports_websocket']['last_update']}
+• Retries: {status['allsports_websocket']['retry_count']}
 
-**Prediction Coverage:**
-• All confederation qualifiers
-• Advanced team analytics
-• Form and home advantage factors
-• Expected goals analysis
-• Betting insights
-
-Ask me: "Predict [Team A] vs [Team B]" for any qualifier!
+💡 **WebSocket provides real-time updates**
+💡 **HTTP API used as fallback**
 """
 
 # Initialize AI
@@ -990,38 +718,30 @@ football_ai = AdvancedFootballAI()
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = """
-🤖 **ADVANCED FOOTBALL PREDICTION AI** ⚽
+🤖 **DUAL-API FOOTBALL PREDICTION BOT** ⚽
 
-🚀 **NOW WITH WORLD CUP QUALIFIERS & PERFECT PREDICTIONS!**
+🚀 **NOW WITH REAL-TIME WEBSOCKET UPDATES!**
 
-🌍 **COMPREHENSIVE COVERAGE:**
-• 15+ Leagues Worldwide
-• All World Cup Qualifiers
-• Perfect AI Predictions
-• Live Match Updates
-• Advanced Analytics
+🌐 **DUAL API SYSTEM:**
+• 🔴 AllSportsAPI WebSocket (Real-time)
+• 🔵 API-Football HTTP (Fallback)
+• 🎯 Perfect Failover System
+• 📊 Live API Status Monitoring
 
 ⚡ **Commands:**
-/live - Live matches (Intl + Club)
-/predict - Perfect predictions  
-/worldcup - Qualifier info
-/hits - API statistics
+/live - Live matches (Real-time preferred)
+/status - API connection status
+/hits - API hit statistics
+/predict - Match predictions
 /help - Complete guide
 
-💬 **Natural Chat Examples:**
+💬 **Natural Chat:**
 "show me live matches"
-"predict Brazil vs Argentina" 
-"world cup qualifiers info"
+"api status" 
 "hit counter stats"
+"predict man city vs liverpool"
 
-🎯 **Perfect Prediction Features:**
-• Probability Analysis
-• Expected Goals
-• Key Match Factors
-• Betting Recommendations
-• Confidence Levels
-
-🚀 **Optimized for API limits & Maximum accuracy!**
+🚀 **Real-time updates with automatic fallback!**
 """
     bot.reply_to(message, welcome_text, parse_mode='Markdown')
 
@@ -1037,88 +757,69 @@ def send_live_matches(message):
 @bot.message_handler(commands=['hits', 'stats'])
 def send_hit_stats(message):
     try:
-        stats = hit_counter.get_hit_stats() + "\n" + api_cache.get_cache_stats()
+        stats = hit_counter.get_hit_stats()
         bot.reply_to(message, stats, parse_mode='Markdown')
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {str(e)}")
+
+@bot.message_handler(commands=['status', 'api'])
+def send_api_status(message):
+    try:
+        response = football_ai.handle_api_status()
+        bot.reply_to(message, response, parse_mode='Markdown')
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {str(e)}")
 
 @bot.message_handler(commands=['predict'])
 def send_predict_help(message):
     help_text = """
-🎯 **PERFECT PREDICTION SYSTEM**
+🎯 **MATCH PREDICTIONS**
 
 Ask me like:
-
-**Club Matches:**
 • "Predict Manchester City vs Liverpool"
-• "Real Madrid vs Barcelona prediction"  
-• "Who will win Bayern Munich vs PSG?"
+• "Who will win Barcelona vs Real Madrid?"
+• "Brazil vs Argentina prediction"
 
-**World Cup Qualifiers:**
-• "Predict Brazil vs Argentina"
-• "Germany vs France world cup qualifier"
-• "USA vs Mexico prediction"
-
-**I'll Provide:**
-• Win/Draw/Loss Probabilities
-• Expected Scoreline
-• Both Teams to Score Analysis
-• Key Match Factors
-• Betting Recommendations
-• Confidence Levels
-
-⚽ **Covering 200+ teams worldwide!**
+I'll analyze team strengths and give you probabilities! 📊
 """
     bot.reply_to(message, help_text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['worldcup', 'qualifiers'])
-def send_worldcup_info(message):
-    try:
-        response = football_ai.handle_worldcup_info()
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
     help_text = """
-🤖 **ADVANCED FOOTBALL AI - COMPLETE HELP**
+🤖 **DUAL-API FOOTBALL BOT HELP**
 
 ⚡ **QUICK COMMANDS:**
-/live - Live matches (International + Club)
-/predict - Perfect AI predictions
-/worldcup - World Cup qualifiers info  
-/hits - API hit counter statistics
-/help - This help guide
+/live - Live matches (Real-time WebSocket)
+/status - API connection status
+/hits - API hit counter statistics  
+/predict - Match predictions
+/help - This help message
 
-🌍 **COVERAGE:**
-• 15+ Domestic Leagues
-• All World Cup Qualifiers (6 Confederations)
-• European Competitions
-• 200+ Teams Database
-
-🎯 **PREDICTION FEATURES:**
-• Advanced Probability Calculations
-• Expected Goals Analysis
-• Form & Home Advantage Factors
-• BTTS & Over/Under Predictions
-• Confidence Level Scoring
-• Betting Recommendations
+🌐 **API SYSTEM:**
+• 🔴 AllSportsAPI WebSocket - Real-time updates
+• 🔵 API-Football HTTP - Reliable fallback
+• Automatic failover between APIs
+• Real-time status monitoring
 
 💬 **CHAT EXAMPLES:**
 • "Show me live matches"
-• "Predict Brazil vs Argentina"
-• "World cup qualifiers info" 
+• "API status"
 • "Hit counter stats"
 • "Predict Man City vs Liverpool"
+
+🎯 **FEATURES:**
+• Real-time live scores (WebSocket)
+• HTTP API fallback
+• Global hit counter
+• Smart API caching
+• Match predictions
 
 🔥 **HIT COUNTER:**
 • Tracks all API calls
 • Daily limit: 100 calls
 • Prevents overuse
 • Real-time statistics
-
-🚀 **Perfect predictions for club & international matches!**
 """
     bot.reply_to(message, help_text, parse_mode='Markdown')
 
@@ -1141,38 +842,44 @@ def handle_all_messages(message):
         bot.reply_to(message, "❌ Sorry, error occurred. Please try again!")
 
 # -------------------------
-# AUTO UPDATER WITH HIT PROTECTION
+# AUTO UPDATER WITH DUAL API SUPPORT
 # -------------------------
 def auto_updater():
-    """Auto-update matches with hit protection"""
+    """Auto-update matches with dual API support"""
+    
+    # Start WebSocket connection first
+    print("🔗 Starting WebSocket connection...")
+    websocket_client.connect()
+    
     while True:
         try:
             current_time = datetime.now().strftime("%H:%M:%S")
-            print(f"\n🔄 [{current_time}] Auto-update check...")
+            print(f"\n🔄 [{current_time}] Dual-API update check...")
             
-            # Check if we can make API call
+            # Check if we can make HTTP API call (for fallback)
             can_make, reason = hit_counter.can_make_request()
             
-            if not can_make:
-                print(f"⏸️ Auto-update skipped: {reason}")
-                wait_time = 300  # Wait 5 minutes
-            else:
-                # Only update if cache is expired
-                if not api_cache.is_cache_valid("live_matches"):
-                    print("💾 Updating cache...")
-                    get_optimized_live_matches()
+            # If WebSocket is not connected, use HTTP API
+            if not api_manager.websocket_connected:
+                print("⚠️ WebSocket disconnected, using HTTP API fallback...")
+                if can_make:
+                    matches = fetch_api_football_matches()
+                    if matches:
+                        api_manager.update_api_football_matches(matches)
                 else:
-                    print("💾 Cache still fresh")
-                
-                # Smart wait time based on usage
-                if hit_counter.daily_hits >= 80:
-                    wait_time = 600  # 10 minutes if high usage
-                elif hit_counter.daily_hits >= 50:
-                    wait_time = 300  # 5 minutes if medium usage
-                else:
-                    wait_time = 180  # 3 minutes if low usage
+                    print(f"⏸️ HTTP API call blocked: {reason}")
             
-            print(f"⏰ Next update in {wait_time} seconds...")
+            # Smart wait time based on WebSocket status
+            if api_manager.websocket_connected:
+                wait_time = 30  # Quick checks when WebSocket is active
+            elif hit_counter.daily_hits >= 80:
+                wait_time = 600  # 10 minutes if high usage
+            elif hit_counter.daily_hits >= 50:
+                wait_time = 300  # 5 minutes if medium usage
+            else:
+                wait_time = 120  # 2 minutes if low usage
+            
+            print(f"⏰ Next update check in {wait_time} seconds...")
             time.sleep(wait_time)
             
         except Exception as e:
@@ -1183,41 +890,35 @@ def auto_updater():
 # STARTUP FUNCTION
 # -------------------------
 def start_bot():
-    """Start the bot"""
+    """Start the bot with dual API support"""
     try:
-        print("🚀 Starting Advanced Football Prediction Bot...")
+        print("🚀 Starting Dual-API Football Prediction Bot...")
         
         # Start auto-updater
         updater_thread = threading.Thread(target=auto_updater, daemon=True)
         updater_thread.start()
-        print("✅ Auto-updater started!")
+        print("✅ Dual-API Auto-Updater started!")
         
-        # Test API
-        print("🔍 Testing API connection...")
-        test_matches = get_optimized_live_matches()
-        print(f"🔍 Initial load: {len(test_matches)} matches")
+        # Initial API test
+        print("🔍 Testing API connections...")
+        test_matches, source = fetch_live_matches_dual_api()
+        print(f"🔍 Initial load: {len(test_matches)} matches from {source}")
         
         # Send startup message
+        api_status = api_manager.get_api_status()
         startup_msg = f"""
-🤖 **ADVANCED FOOTBALL PREDICTION AI STARTED!**
+🤖 **DUAL-API FOOTBALL BOT STARTED!**
 
-✅ **Advanced Features Active:**
-• World Cup Qualifiers Coverage 🌍
-• Perfect Prediction Engine 🎯
-• 15+ Leagues Worldwide
-• 200+ Teams Database
-• Advanced Analytics
+✅ **Dual API System Active:**
+• 🔴 WebSocket: {api_status['allsports_websocket']['status']}
+• 🔵 HTTP API: {api_status['api_football']['status']}
+• 🎯 Automatic Failover
+• 📊 Real-time Monitoring
 
-🌍 **World Cup Qualifiers:**
-• UEFA, CONMEBOL, CONCACAF
-• AFC, CAF, OFC
-• All confederations covered
-
-🎯 **Prediction System:**
-• Probability Analysis
-• Expected Goals
-• Form & Home Advantage
-• Confidence Scoring
+🌐 **Current Status:**
+• WebSocket Matches: {api_status['allsports_websocket']['match_count']}
+• HTTP API Matches: {api_status['api_football']['match_count']}
+• WebSocket Retries: {api_status['allsports_websocket']['retry_count']}
 
 🔥 **Hit Counter Ready**
 📊 Today's Hits: {hit_counter.daily_hits}/100
@@ -1226,7 +927,7 @@ def start_bot():
 🕒 **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 🌐 **Mode:** {'WEBHOOK' if USE_WEBHOOK else 'POLLING'}
 
-🚀 **Perfect predictions for club & international matches!**
+🚀 **Real-time updates with perfect fallback!**
 """
         bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
         

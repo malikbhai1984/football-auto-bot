@@ -1,460 +1,361 @@
-import os
-import requests
 import telebot
-import time
-import random
-import threading
-from datetime import datetime, timedelta
-from dotenv import load_dotenv
-import pytz
-import logging
+import requests
 import json
-from flask import Flask, request # <--- Flask is now required
+import time
+import threading
+import os
+import random
+from flask import Flask, request, abort
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+import pytz
 
-# -------------------------
-# Load environment variables & Basic Setup
-# -------------------------
+# --- 1. Environment and Configuration ---
 load_dotenv()
 
-# --- Configuration ---
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
-API_KEY = os.environ.get("API_KEY") 
+# Get Environment Variables
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+API_KEY = os.getenv('API_KEY')
+OWNER_CHAT_ID = os.getenv('OWNER_CHAT_ID')
+PORT = int(os.environ.get('PORT', '5000')) # Default to 5000 if not set
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
-# Webhook Configuration (NEW!)
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-PORT = os.environ.get("PORT", 8080) 
+# Basic checks
+if not BOT_TOKEN or not API_KEY or not WEBHOOK_URL:
+    print("❌ Error: BOT_TOKEN, API_KEY, or WEBHOOK_URL not set in environment variables.")
+    exit(1)
 
-# Checks
-if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN missing! Please set it in your .env file.")
-if not WEBHOOK_URL:
-    raise ValueError("❌ WEBHOOK_URL missing! Set your Railway domain in .env.")
+# Telegram Bot Initialization
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode='Markdown')
 
-try:
-    if OWNER_CHAT_ID: OWNER_CHAT_ID = int(OWNER_CHAT_ID)
-except (ValueError, TypeError):
-    OWNER_CHAT_ID = None 
-    print("⚠️ WARNING: OWNER_CHAT_ID is missing or invalid.")
-    
-# Set up environment
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Flask App Initialization
+app = Flask(__name__)
 
-bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__) # Initialize Flask app
-
-# -------------------------
-# Core Bot Logic Classes (MatchAnalysis, HTTPAPIManager, GlobalHitCounter, EnhancedFootballAI) 
-# --- [ ALL CORE LOGIC REMAINS IDENTICAL TO V4/V3, ENSURING FUNCTIONALITY ] ---
-# -------------------------
-
-# >>> PASTE THE CLASS DEFINITIONS FROM V4 HERE <<<
-# (MatchAnalysis, HTTPAPIManager, GlobalHitCounter, EnhancedFootballAI, and all utility functions)
-# For brevity, I am instructing you to paste the unchanged core logic from V4/V3 here.
-
-# --- [ All utility functions and Class definitions from V4 (e.g., get_current_date_pakt, get_mock_previous_data, LEAGUE_CONFIG, etc.) should be pasted here ] ---
-
-# ... [ PASTE V4 CODE HERE - CONTINUED ] ...
-class MatchAnalysis:
-    # ... (all methods from V4) ...
-    def analyze_match_trends(self, match_data):
-        try:
-            home_team = match_data.get("match_hometeam_name", "")
-            away_team = match_data.get("match_awayteam_name", "")
-            home_score = int(match_data.get("match_hometeam_score", 0))
-            away_score = int(match_data.get("match_awayteam_score", 0))
-            minute = match_data.get("match_status", "0")
-            
-            if minute == "HT": match_progress = 50
-            elif minute == "FT": match_progress = 100
-            elif minute.isdigit(): match_progress = min(100, (int(minute) / 90) * 100)
-            else: match_progress = 0
-            
-            goal_difference = home_score - away_score
-            total_goals = home_score + away_score
-            
-            if goal_difference > 0: momentum = f"🏠 {home_team} dominating"; confidence = "HIGH"
-            elif goal_difference < 0: momentum = f"✈️ {away_team} controlling"; confidence = "HIGH"
-            else:
-                if total_goals > 2: momentum = "⚡ Both teams attacking"; confidence = "MEDIUM"
-                else: momentum = "🛡️ Balanced match"; confidence = "LOW"
-            
-            if match_progress < 30: next_goal_window = "First half"
-            elif match_progress < 60: next_goal_window = "Early second half"
-            elif match_progress < 75: next_goal_window = "Mid second half"
-            else: next_goal_window = "Late game"
-            
-            return {
-                "match_progress": f"{match_progress:.1f}%",
-                "momentum": momentum,
-                "confidence": confidence,
-                "goal_difference": goal_difference,
-                "total_goals": total_goals,
-                "next_goal_window": next_goal_window,
-                "goal_intensity": "HIGH" if total_goals > 2 else "MEDIUM" if total_goals > 0 else "LOW",
-                "match_tempo": self.analyze_tempo(home_score, away_score, match_progress)
-            }
-            
-        except Exception as e:
-            return {}
-    
-    def analyze_tempo(self, home_score, away_score, progress):
-        goal_rate = (home_score + away_score) / (progress / 100) if progress > 0 else 0
-        
-        if goal_rate > 0.1: return "⚡ High Tempo - Goal Fest"
-        elif goal_rate > 0.05: return "🎯 Medium Tempo - Balanced"
-        else: return "🛡️ Low Tempo - Defensive"
-    
-    def get_basic_match_info(self, match_data):
-        home_team = match_data.get("match_hometeam_name", "Unknown")
-        away_team = match_data.get("match_awayteam_name", "Unknown")
-        home_score = match_data.get("match_hometeam_score", "0")
-        away_score = match_data.get("match_awayteam_score", "0")
-        minute = match_data.get("match_status", "0")
-        league = match_data.get("league_name", "Unknown League")
-        
-        if minute == "HT": status = "🔄 HALF TIME"
-        elif minute == "FT": status = "🏁 FULL TIME"
-        elif minute.isdigit(): status = f"⏱️ LIVE - {minute}'"
-        else: status = f"🕒 {minute}"
-        
-        return f"""
-🏆 **{league}**
-
-⚽ **{home_team}** {home_score} - {away_score} **{away_team}**
-
-{status}
-"""
-    
-    def get_match_statistics_dict(self, match_data):
-        # Mock/Default stats (Crucial for Expert Bet logic)
-        return {
-            'Shots on Goal': random.randint(3, 15),
-            'Shots off Goal': random.randint(3, 15),
-            'Ball Possession': random.randint(40, 60),
-            'Red Cards': 0, 
-            'Yellow Cards': random.randint(1, 5)
-        }
-            
-    def get_match_statistics(self, match_data):
-        home_pos = random.randint(40, 65)
-        away_pos = 100 - home_pos
-        
-        return f"""
-• Shots on Goal: {random.randint(3, 12)} | {random.randint(3, 12)}
-• Shots off Goal: {random.randint(2, 8)} | {random.randint(2, 8)}
-• Ball Possession: {home_pos}% | {away_pos}%
-• Corner Kicks: {random.randint(1, 8)} | {random.randint(1, 8)}
-• Fouls: {random.randint(5, 15)} | {random.randint(5, 15)}
-"""
-            
-    def get_live_insights(self, match_data):
-        home_score = int(match_data.get("match_hometeam_score", 0))
-        away_score = int(match_data.get("match_awayteam_score", 0))
-        minute = match_data.get("match_status", "0")
-        
-        total_goals = home_score + away_score
-        insights = []
-        
-        if total_goals == 0: insights.append("🔒 Defensive battle - No goals yet")
-        elif total_goals >= 3: insights.append("⚡ Goal fest - High scoring game")
-        
-        if home_score > away_score: insights.append(f"🏠 Home advantage showing")
-        elif away_score > home_score: insights.append(f"✈️ Away team impressive")
-        
-        if minute.isdigit() and int(minute) > 75 and abs(home_score - away_score) <= 1:
-            insights.append("🎯 Late drama possible")
-        
-        if not insights: insights.append("⚽ Competitive match underway")
-        
-        return "\n".join([f"• {insight}" for insight in insights])
-        
-    def generate_simple_score_based_prediction(self, match_data):
-        home_team = match_data.get("match_hometeam_name", "Home")
-        away_team = match_data.get("match_awayteam_name", "Away")
-        home_score = int(match_data.get("match_hometeam_score", 0))
-        away_score = int(match_data.get("match_awayteam_score", 0))
-        minute = match_data.get("match_status", "0")
-
-        if minute == "FT": return "🏁 Match is over."
-
-        progress = 0
-        if minute == "HT": progress = 50
-        elif minute.isdigit(): progress = min(100, (int(minute) / 90) * 100)
-        
-        if progress > 85:
-            if home_score > away_score: return f"✅ {home_team} likely to WIN\n❌ {away_team} needs miracle"
-            elif away_score > home_score: return f"✅ {away_team} likely to WIN\n❌ {home_team} needs miracle"
-            else: return f"🤝 DRAW looking probable\n🎯 Late goal possible"
-        else:
-            goal_difference = home_score - away_score
-            
-            if goal_difference == 0: return f"🎯 Both teams can WIN\n⚡ Next goal crucial"
-            elif abs(goal_difference) == 1:
-                leading_team = home_team if goal_difference > 0 else away_team
-                trailing_team = away_team if goal_difference > 0 else home_team
-                return f"✅ {leading_team} has advantage\n⚡ {trailing_team} pushing equalizer"
-            else:
-                leading_team = home_team if goal_difference > 0 else away_team
-                return f"✅ {leading_team} dominating\n❌ Big comeback needed"
-                
-match_analyzer = MatchAnalysis()
-# ... [ HTTPAPIManager, GlobalHitCounter, LEAGUE_CONFIG, fetch_api_football_matches, fetch_live_matches_http, process_match_data ] ...
-# These are kept identical, just initializing here for context:
-
-API_FOOTBALL_URL = "https://apiv3.apifootball.com"
-PAKISTAN_TZ = pytz.timezone('Asia/Karachi')
-
-def get_current_date_pakt():
-    return datetime.now(PAKISTAN_TZ).strftime('%Y-%m-%d')
-
-def get_mock_previous_data(team_name, count=5):
-    results = random.choices(['W', 'L', 'D'], weights=[40, 30, 30], k=count)
-    btts_count = sum([1 for r in results if r in ['W', 'D']])
-    recent_form = "".join(results)
-    home_goals = random.randint(10, 15)
-    away_goals = random.randint(5, 12)
-    return {
-        "form": recent_form,
-        "goals_scored": home_goals,
-        "goals_conceded": away_goals,
-        "btts_rate": f"{btts_count*20}%", 
-        "avg_goals_per_game": (home_goals + away_goals) / count
-    }
-
+# Constants
 LEAGUE_CONFIG = {
-    "152": {"name": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League", "priority": 1, "type": "domestic"},
-    "302": {"name": "🇪🇸 La Liga", "priority": 1, "type": "domestic"},
-    "207": {"name": "🇮🇹 Serie A", "priority": 1, "type": "domestic"},
-    "168": {"name": "🇩🇪 Bundesliga", "priority": 1, "type": "domestic"},
-    "176": {"name": "🇫🇷 Ligue 1", "priority": 1, "type": "domestic"},
-    "169": {"name": "🇳🇱 Eredivisie", "priority": 2, "type": "domestic"},
-    "262": {"name": "🇵🇹 Primeira Liga", "priority": 2, "type": "domestic"},
-    "149": {"name": "⭐ Champions League", "priority": 1, "type": "european"},
-    "150": {"name": "✨ Europa League", "priority": 2, "type": "european"},
-    "5": {"name": "🌍 World Cup Qualifiers", "priority": 1, "type": "worldcup"},
+    "Premier League": 140, 
+    "La Liga": 140, 
+    "Bundesliga": 140, 
+    "Serie A": 140, 
+    "Ligue 1": 140,
+    "Champions League": 140
 }
 
-def get_league_name(league_id):
-    league_info = LEAGUE_CONFIG.get(str(league_id))
-    if league_info:
-        return league_info["name"]
-    return f"League {league_id}"
-
-class HTTPAPIManager:
-    def __init__(self):
-        self.api_football_matches = []
-        self.last_api_football_update = None
-        
-    def update_api_football_matches(self, matches):
-        self.api_football_matches = matches
-        self.last_api_football_update = datetime.now()
-        
-    def get_live_matches(self):
-        current_time = datetime.now()
-        if (self.last_api_football_update and 
-              (current_time - self.last_api_football_update).total_seconds() < 120 and 
-              self.api_football_matches):
-            return self.api_football_matches, "API_FOOTBALL"
-        return [], "NONE"
-    
-    def get_api_status(self):
-        api_football_update_time = self.last_api_football_update.strftime("%H:%M:%S") if self.last_api_football_update else "Never"
-        
-        return {
-            "api_football": {
-                "status": "ACTIVE" if self.api_football_matches else "INACTIVE",
-                "last_update": api_football_update_time,
-                "match_count": len(self.api_football_matches)
-            }
-        }
-    
-    def find_match_by_teams(self, team1, team2=None):
-        all_matches = self.api_football_matches
-        team1_lower = team1.lower()
-        
-        for match in all_matches:
-            home_team = match.get("match_hometeam_name", "").lower()
-            away_team = match.get("match_awayteam_name", "").lower()
-            
-            is_live = match.get('match_live') == '1' or match.get('match_status') == 'HT' or (match.get('match_status') and match.get('match_status').isdigit())
-            
-            if is_live and (team1_lower in home_team or team1_lower in away_team):
-                return match 
-                
-        return None
-
-api_manager = HTTPAPIManager()
+# --- 2. Global State and Utility Classes ---
 
 class GlobalHitCounter:
+    """Tracks daily API hits (Mock limit: 100)"""
     def __init__(self):
-        self.total_hits = 0
         self.daily_hits = 0
-        self.hourly_hits = 0
-        self.last_hit_time = None
-        self.last_reset = datetime.now()
-        
-    def record_hit(self):
-        current_time = datetime.now()
-        
-        if current_time.date() > self.last_reset.date():
+        self.last_reset_date = datetime.now(pytz.utc).date()
+
+    def increment(self):
+        now_date = datetime.now(pytz.utc).date()
+        if now_date > self.last_reset_date:
             self.daily_hits = 0
-            self.last_reset = current_time
-        
-        if not self.last_hit_time or current_time.hour > self.last_hit_time.hour:
-            self.hourly_hits = 0
-        
-        self.total_hits += 1
+            self.last_reset_date = now_date
         self.daily_hits += 1
-        self.hourly_hits += 1
-        self.last_hit_time = current_time
-        
-        return True
-    
+        return self.daily_hits
+
     def get_hit_stats(self):
-        now = datetime.now()
-        remaining_daily = max(0, 100 - self.daily_hits)
-        
-        next_reset = (self.last_reset + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        time_until_reset = (next_reset - now).total_seconds()
-        
-        hours_until_reset = int(time_until_reset // 3600)
-        minutes_until_reset = int((time_until_reset % 3600) // 60)
-        
-        api_status = api_manager.get_api_status()
-        
-        stats = f"""
-🔥 **GLOBAL HIT COUNTER & API STATUS**
-
-📈 **Current Usage:**
-• Total Hits: {self.total_hits}
-• Today's Hits: {self.daily_hits}/100
-• This Hour: {self.hourly_hits}
-
-🎯 **Remaining Capacity:**
-• Daily Remaining: {remaining_daily} calls
-• Time Until Reset: {hours_until_reset}h {minutes_until_reset}m
-• Usage Percentage: {(self.daily_hits/100)*100:.1f}%
-
-🌐 **API STATUS (Single HTTP):**
-• API-Football (HTTP): {api_status['api_football']['status']}
-  - Matches: {api_status['api_football']['match_count']}
-  - Updated: {api_status['api_football']['last_update']}
-
-⏰ **Last Hit:** {self.last_hit_time.strftime('%H:%M:%S') if self.last_hit_time else 'Never'}
-
-💡 **Recommendations:**
-{'🟢 Safe to continue' if self.daily_hits < 80 else '🟡 Slow down' if self.daily_hits < 95 else '🔴 STOP API CALLS'}
-"""
-        return stats
-    
-    def can_make_request(self):
-        if self.daily_hits >= 100:
-            return False, "Daily limit reached"
-        if self.hourly_hits >= 40:
-            return False, "Hourly limit caution"
-        return True, "OK"
+        return f"🔥 API Hits Today: {self.daily_hits}/100\nLast Reset: {self.last_reset_date.strftime('%Y-%m-%d')}"
 
 hit_counter = GlobalHitCounter()
 
-def fetch_api_football_matches(match_live_only=True):
-    if not API_KEY:
-        logging.error("API_KEY is not set. Cannot fetch matches.")
-        return []
+class HTTPAPIManager:
+    """Manages API data caching and fetching via HTTP/HTTPS"""
+    def __init__(self):
+        self.match_cache = {}
+        self.last_fetch_time = None
+        self.api_status = True
 
-    can_make, reason = hit_counter.can_make_request()
-    if not can_make:
-        logging.warning(f"API call blocked: {reason}")
-        return []
+    def fetch_api_football_matches(self, match_live_only=False):
+        """Fetches matches from API-Football and updates cache."""
+        global API_KEY
         
-    hit_counter.record_hit()
-    
-    try:
-        if match_live_only:
-            url = f"{API_FOOTBALL_URL}/?action=get_events&match_live=1&APIkey={API_KEY}"
-        else:
-            today_date = get_current_date_pakt()
-            url = f"{API_FOOTBALL_URL}/?action=get_events&from={today_date}&to={today_date}&APIkey={API_KEY}"
-            
-        response = requests.get(url, timeout=20) 
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            if isinstance(data, list):
-                for match in data:
-                    league_id = match.get("league_id", "")
-                    match["league_name"] = get_league_name(league_id)
-                    match["source"] = "api_football"
-                
-                return data
-            else:
-                if isinstance(data, dict) and 'error' in data.get('result', '').lower():
-                    logging.error(f"API-Football Error in response: {data.get('result')}")
-                return []
-        else:
-            logging.error(f"API-Football HTTP Error: Status {response.status_code}")
-            return []
-            
-    except requests.exceptions.Timeout:
-        logging.error("API-Football Fetch Error: Request timed out.")
-        return []
-    except requests.exceptions.ConnectionError:
-        logging.error("API-Football Fetch Error: Connection failed.")
-        return []
-    except Exception as e:
-        logging.error(f"API-Football Fetch Error: {e}")
-        return []
+        if hit_counter.daily_hits >= 100:
+            print("🛑 API Limit Reached for today. Serving from cache.")
+            return self.match_cache.get('today_matches', []), 'Cache'
 
-def fetch_live_matches_http():
-    matches, source = api_manager.get_live_matches()
-    if source == "API_FOOTBALL":
-        return matches, source
+        url = "https://v3.football.api-sports.io/fixtures"
+        headers = {
+            'x-apisports-key': API_KEY
+        }
         
-    api_football_matches = fetch_api_football_matches(match_live_only=True)
-    if api_football_matches:
-        api_manager.update_api_football_matches(api_football_matches)
-        return api_football_matches, "API_FOOTBALL"
-        
-    return [], "NONE"
-
-def process_match_data(matches, live_only=True):
-    if not matches: return []
-    processed_matches = []
-    unique_matches = {}
-    
-    for match in matches:
-        match_id = match.get("match_id") or f"{match.get('match_hometeam_name')}-{match.get('match_awayteam_name')}"
+        # We fetch fixtures for today
+        today = datetime.now(pytz.utc).strftime('%Y-%m-%d')
         
         try:
-            home_team = match.get("match_hometeam_name", "Unknown")
-            away_team = match.get("match_awayteam_name", "Unknown")
-            home_score = match.get("match_hometeam_score", "0")
-            away_score = match.get("match_awayteam_score", "0")
-            minute = match.get("match_status", "0")
-            league_name = match.get("league_name", "Unknown League")
-            
-            if minute == "HT": match_status = "HALF TIME"; display_minute = "HT"
-            elif minute == "FT": match_status = "FULL TIME"; display_minute = "FT"
-            elif minute.isdigit(): match_status = "LIVE"; display_minute = f"{minute}'"
-            else: match_status = "UPCOMING"; display_minute = match.get("match_time", "TBD")
-            
-            is_live = match_status in ["LIVE", "HALF TIME"]
-            
-            if live_only and not is_live: continue
-                
-            source_icon = "🔵"
-            
-            unique_matches[match_id] = {
-                "home_team": home_team, "away_team": away_team, 
-                "score": f"{home_score}-{away_score}" if is_live else display_minute,
-                "minute": display_minute, "status": match_status, "league": league_name,
-                "is_live": is_live, "source_icon": source_icon if is_live else "📅",
-                "raw_data": match  
+            params = {
+                'date': today,
+                'status': 'TBD-PST' if not match_live_only else 'LIVE-HT-ET-BT'
             }
-        except Exception as e:
-            continue
-    return list(unique_matches.values())
+            hit_counter.increment()
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data and data.get('response'):
+                self.api_status = True
+                self.match_cache['today_matches'] = data['response']
+                self.last_fetch_time = datetime.now(pytz.utc)
+                return data['response'], 'API-Football HTTP'
+            else:
+                print("API returned empty response.")
+                self.api_status = True # Connection was successful
+                return [], 'API-Football HTTP'
+                
+        except requests.exceptions.RequestException as e:
+            print(f"API Fetch Error: {e}")
+            self.api_status = False
+            return self.match_cache.get('today_matches', []), 'Cache (Error)'
+            
+    def find_match_by_teams(self, team_name):
+        """Finds a match in cache/live data based on a team name."""
+        matches, _ = self.fetch_api_football_matches(match_live_only=False)
+        team_name_lower = team_name.lower()
+        
+        for match in matches:
+            home = match['teams']['home']['name'].lower()
+            away = match['teams']['away']['name'].lower()
+            
+            if team_name_lower in home or team_name_lower in away:
+                return match
+        return None
+
+    def get_api_status_text(self):
+        status = "✅ Connected" if self.api_status else "❌ Disconnected"
+        last_fetch = self.last_fetch_time.strftime("%H:%M:%S UTC") if self.last_fetch_time else "N/A"
+        return f"🌐 API Status: {status}\n🕒 Last Successful Fetch: {last_fetch}"
+        
+api_manager = HTTPAPIManager()
+
+class MatchAnalysis:
+    """Mocked analysis based on match details and simulated stats."""
+    
+    def analyze_match_trends(self, match_data):
+        """Generates mock analysis trends based on score/minute."""
+        
+        status = match_data['fixture']['status']['short']
+        minute_str = match_data['fixture']['status']['elapsed']
+        
+        home_score = match_data['goals']['home']
+        away_score = match_data['goals']['away']
+        
+        if status in ['FT', 'AET', 'PEN']: return {"match_progress": "Finished", "momentum": "N/A", "confidence": "N/A", "match_tempo": "N/A", "next_goal_window": "N/A", "goal_difference": 0}
+        
+        if minute_str: minute = int(minute_str)
+        else: minute = 0
+
+        goal_diff = abs(home_score - away_score)
+        total_goals = home_score + away_score
+        
+        # Simple Mock Logic
+        if total_goals >= 3 and minute < 60:
+            momentum = "High Attacking Pressure"
+            tempo = "⚡ High Tempo - Goal Fest"
+            next_goal_window = "Next 10 Minutes"
+        elif total_goals == 0 and minute > 30 and minute < 70:
+            momentum = "Stalemate / Midfield Battle"
+            tempo = "🛡️ Low Tempo - Defensive"
+            next_goal_window = "Second Half (60-90)"
+        else:
+            momentum = "Balanced / Current Leader Defense"
+            tempo = "Medium Tempo"
+            next_goal_window = "End of Half (40-45) or (75-90)"
+
+        confidence = f"{90 - (minute / 2)}" # Higher confidence early on
+        progress = f"{minute/90*100:.1f}%"
+        
+        return {
+            "match_progress": progress,
+            "momentum": momentum,
+            "confidence": f"{confidence:.1f}%",
+            "match_tempo": tempo,
+            "next_goal_window": next_goal_window,
+            "goal_difference": goal_diff
+        }
+
+    def get_match_statistics(self, match_data):
+        """Generates mock statistics for the report."""
+        stats = self.get_match_statistics_dict(match_data)
+        
+        response = ""
+        for k, v in stats.items():
+            response += f"• {k}: {v}\n"
+        return response
+
+    def get_match_statistics_dict(self, match_data):
+        """Generates mock statistics dict for internal use."""
+        # Note: Actual API-Football stats require a separate endpoint. This is mock data.
+        minute_str = match_data['fixture']['status']['elapsed']
+        if minute_str: minute = int(minute_str)
+        else: minute = 0
+        
+        total_shots = max(10, 15 + random.randint(-5, 5))
+        shots_on_goal = int(total_shots / 3)
+        possession = f"{50 + random.randint(-5, 5)}% - {50 - random.randint(-5, 5)}%"
+        
+        return {
+            "Total Shots": total_shots,
+            "Shots on Goal": shots_on_goal,
+            "Possession": possession,
+            "Corners": random.randint(5, 12),
+            "Red Cards": 0,
+            "Free Kicks": random.randint(15, 25)
+        }
+
+    def get_basic_match_info(self, match_data):
+        home = match_data['teams']['home']['name']
+        away = match_data['teams']['away']['name']
+        score = f"{match_data['goals']['home']}-{match_data['goals']['away']}"
+        minute = match_data['fixture']['status']['elapsed'] if match_data['fixture']['status']['elapsed'] else '0'
+        league = match_data['league']['name']
+        
+        return f"⚽ **{home} vs {away}**\n🏆 {league} | Score: {score} | Minute: {minute}'\n"
+
+    def get_live_insights(self, match_data):
+        """Generates live insights based on current score/minute."""
+        home_score = match_data['goals']['home']
+        away_score = match_data['goals']['away']
+        minute_str = match_data['fixture']['status']['elapsed']
+        
+        if minute_str: minute = int(minute_str)
+        else: minute = 0
+
+        total_goals = home_score + away_score
+        
+        if minute > 75 and total_goals <= 1:
+            return "💡 **Insight:** High probability of late attacking substitutions. Defensive lines are thinning. Look for a late goal (80'+)."
+        elif minute < 40 and total_goals == 0:
+            return "💡 **Insight:** Low-scoring first half expected. Check for increased tempo right after half-time (45-60')."
+        elif home_score == away_score and total_goals > 2:
+            return "💡 **Insight:** Very balanced match, high chance of a late draw or a last-minute goal from the team with higher shots on target."
+        else:
+            return "💡 **Insight:** Standard match tempo. Focus on the next 15 minutes window for a likely score change."
+            
+    def generate_simple_score_based_prediction(self, match_data):
+        """Generates simple, fast prediction text."""
+        home_score = match_data['goals']['home']
+        away_score = match_data['goals']['away']
+        minute_str = match_data['fixture']['status']['elapsed']
+        
+        if minute_str: minute = int(minute_str)
+        else: minute = 0
+        
+        total_goals = home_score + away_score
+        
+        if minute >= 60:
+            if home_score > away_score:
+                return f"{match_data['teams']['home']['name']} is likely to win unless a late equalizer occurs. Focus on Under 3.5 goals."
+            elif away_score > home_score:
+                return f"{match_data['teams']['away']['name']} is holding the lead. Focus on Under 3.5 goals."
+            elif total_goals >= 2:
+                return "Very tight game! BTTS YES is highly probable."
+        
+        return "The game is open. Look for the next goal market."
+
+match_analyzer = MatchAnalysis()
+
+def get_mock_previous_data(team_name):
+    """Generates mock historical data for the bot's internal logic (V6 does not use this heavily)."""
+    return {
+        "last_5_games": [
+            {"result": "W", "score": f"{random.randint(1, 3)}-{random.randint(0, 1)}"},
+            {"result": "D", "score": "1-1"},
+            {"result": "L", "score": f"{random.randint(0, 1)}-{random.randint(1, 3)}"},
+            {"result": "W", "score": f"{random.randint(2, 4)}-{random.randint(0, 2)}"},
+            {"result": "W", "score": f"{random.randint(1, 3)}-{random.randint(0, 1)}"},
+        ],
+        "average_goals_scored": random.uniform(1.5, 2.5)
+    }
+
+def process_match_data(raw_matches, live_only=False):
+    """Processes API-Football raw data into a simplified, uniform structure."""
+    processed = []
+    
+    for match in raw_matches:
+        status = match['fixture']['status']['short']
+        minute = match['fixture']['status']['elapsed']
+        
+        if live_only and status not in ['LIVE', 'HT', 'ET', 'BT']: continue
+        if not live_only and status in ['FT', 'AET', 'PEN']: continue
+        
+        # Check if the match is current or upcoming
+        is_live = status in ['LIVE', 'HT', 'ET', 'BT']
+        
+        # Convert UTC time to Pakistan Time (PKT)
+        utc_dt = datetime.fromisoformat(match['fixture']['date'].replace('Z', '+00:00'))
+        pkt_tz = pytz.timezone('Asia/Karachi')
+        pkt_dt = utc_dt.astimezone(pkt_tz)
+        
+        score_text = f"{match['goals']['home']}-{match['goals']['away']}" if is_live else pkt_dt.strftime('%H:%M PKT')
+        icon = "🟢" if is_live else "🟠"
+        
+        processed.append({
+            'league': match['league']['name'],
+            'home_team': match['teams']['home']['name'],
+            'away_team': match['teams']['away']['name'],
+            'score': score_text,
+            'status': status,
+            'minute': minute if is_live else '0',
+            'is_live': is_live,
+            'source_icon': icon
+        })
+    return processed
+
+def fetch_live_matches_http():
+    """Fetches live matches specifically from API-Football."""
+    global API_KEY
+    if hit_counter.daily_hits >= 100:
+        return api_manager.match_cache.get('today_matches', []), 'Cache'
+
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {
+        'x-apisports-key': API_KEY
+    }
+    
+    # Statuses for Live/HT/Extra Time
+    params = {
+        'status': 'LIVE-HT-ET-BT'
+    }
+    
+    try:
+        hit_counter.increment()
+        response = requests.get(url, headers=headers, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data and data.get('response'):
+            # Update cache to include live data for analysis
+            live_matches = data['response']
+            cached_matches = api_manager.match_cache.get('today_matches', [])
+            
+            # Simple merge: add/replace live matches in cache
+            live_ids = {m['fixture']['id'] for m in live_matches}
+            new_cache = [m for m in cached_matches if m['fixture']['id'] not in live_ids]
+            new_cache.extend(live_matches)
+            api_manager.match_cache['today_matches'] = new_cache
+            api_manager.last_fetch_time = datetime.now(pytz.utc)
+            api_manager.api_status = True
+            
+            return live_matches, 'API-Football HTTP'
+        else:
+            api_manager.api_status = True
+            return [], 'API-Football HTTP'
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Live Fetch Error: {e}")
+        api_manager.api_status = False
+        # Fallback: Filter live matches from existing cache
+        return [m for m in api_manager.match_cache.get('today_matches', []) if m['fixture']['status']['short'] in ['LIVE', 'HT', 'ET', 'BT']], 'Cache (Error)'
+
+def get_current_date_pakt():
+    """Gets current date in Pakistan Time."""
+    pkt_tz = pytz.timezone('Asia/Karachi')
+    return datetime.now(pkt_tz).strftime('%d %b, %Y')
+
+# --- 3. EnhancedFootballAI Class (V6) ---
 
 class EnhancedFootballAI:
     def __init__(self):
@@ -500,7 +401,7 @@ class EnhancedFootballAI:
         elif any(word in message_lower for word in ['api status', 'connection', 'status', '/status']):
             return self.handle_api_status()
         elif any(word in message_lower for word in ['hello', 'hi', 'hey', 'start', '/start']):
-            return "👋 Hello! I'm **SUPER STABLE Football Analysis AI V5 (Webhook Mode)**! ⚽\n\n🔍 **Stable HTTP API Only**\n\nTry: `/live`, `/today`, `/analysis man city`, or `/expert_bet real madrid`."
+            return "👋 Hello! I'm **SUPER STABLE Football Analysis AI V6 (Multi O/U)**! ⚽\n\n🔍 **Stable HTTP API Only**\n\nTry: `/live`, `/today`, `/analysis man city`, or `/expert_bet real madrid`."
         else:
             return self.handle_team_specific_query(message_lower)
 
@@ -525,7 +426,7 @@ class EnhancedFootballAI:
             response += f"**{league}**\n"
             for match in league_matches:
                 icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                response += f"{match['source_icon']} {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}\n"
+                response += f"{match['source_icon']} {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}'\n"
             response += "\n"
         
         response += f"🔥 API Hits Today: {hit_counter.daily_hits}/100\n"
@@ -534,7 +435,7 @@ class EnhancedFootballAI:
         return response
 
     def handle_todays_matches(self):
-        raw_matches = fetch_api_football_matches(match_live_only=False)
+        raw_matches, _ = api_manager.fetch_api_football_matches(match_live_only=False)
         matches = process_match_data(raw_matches, live_only=False) 
         
         if not matches:
@@ -549,7 +450,7 @@ class EnhancedFootballAI:
             response += "--- **🔵 LIVE / FT MATCHES** ---\n"
             for match in live_matches[:5]:
                 icon = "⏱️" if match['status'] == 'LIVE' else "🔄" if match['status'] == 'HALF TIME' else "🏁"
-                response += f"{match['league']}\n{match['source_icon']} {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}\n"
+                response += f"{match['league']}\n{match['source_icon']} {match['home_team']} {match['score']} {match['away_team']} {icon} {match['minute']}'\n"
             response += "\n"
             
         if upcoming_matches:
@@ -574,8 +475,8 @@ class EnhancedFootballAI:
         if match_data:
             return self.generate_live_match_report(match_data)
         else:
-            raw_matches, source = fetch_live_matches_http()
-            live_matches = [m for m in raw_matches if m.get('match_live') == '1' or m.get('match_status') == 'HT']
+            raw_matches, _ = fetch_live_matches_http()
+            live_matches = [m for m in raw_matches if m['fixture']['status']['short'] in ['LIVE', 'HT', 'ET', 'BT']]
 
             if not live_matches:
                 return "❌ No live matches available for analysis right now. Try `/today` for the schedule."
@@ -583,10 +484,10 @@ class EnhancedFootballAI:
             response = "🔍 **DETAILED MATCH ANALYSIS SUMMARY**\n\n"
             for match in live_matches[:5]:
                 analysis = match_analyzer.analyze_match_trends(match)
-                home_team = match.get("match_hometeam_name", "Unknown")
-                away_team = match.get("match_awayteam_name", "Unknown")
-                score = f"{match.get('match_hometeam_score', '0')}-{match.get('match_awayteam_score', '0')}"
-                minute = match.get('match_status', '0')
+                home_team = match['teams']['home']['name']
+                away_team = match['teams']['away']['name']
+                score = f"{match['goals']['home']}-{match['goals']['away']}"
+                minute = match['fixture']['status']['elapsed']
                 
                 response += f"**{home_team} vs {away_team}** ({minute}')\n"
                 response += f"Score: {score} | Progress: {analysis.get('match_progress', 'N/A')}\n"
@@ -600,8 +501,8 @@ class EnhancedFootballAI:
         basic_info = match_analyzer.get_basic_match_info(match_data)
         analysis = match_analyzer.analyze_match_trends(match_data)
         statistics = match_analyzer.get_match_statistics(match_data)
-        home_team = match_data.get("match_hometeam_name", "Home")
-        away_team = match_data.get("match_awayteam_name", "Away")
+        home_team = match_data['teams']['home']['name']
+        away_team = match_data['teams']['away']['name']
         predictions, alert_result = self.generate_combined_prediction(match_data, home_team, away_team, send_alert=False)
         
         return f"""
@@ -628,15 +529,15 @@ class EnhancedFootballAI:
         
     def _get_match_progress(self, minute):
         if minute == "HT": return 50.0
-        if minute.isdigit(): return min(90.0, float(minute))
-        return 0.0
+        if minute is None or not str(minute).isdigit(): return 0.0
+        return min(90.0, float(minute))
 
     def _calculate_1x2_probability(self, match_data, team1, team2):
         strength1, avg1 = self.get_team_strength_and_avg(team1)
         strength2, avg2 = self.get_team_strength_and_avg(team2)
-        home_score = int(match_data.get("match_hometeam_score", 0))
-        away_score = int(match_data.get("match_awayteam_score", 0))
-        minute = match_data.get("match_status", "0")
+        home_score = match_data['goals']['home']
+        away_score = match_data['goals']['away']
+        minute = match_data['fixture']['status']['elapsed']
         
         total_strength = strength1 + strength2
         prob1_base = (strength1 / total_strength) * 100
@@ -673,40 +574,76 @@ class EnhancedFootballAI:
             
         return prob1, prob2, draw_prob
         
-    def _calculate_over_under_probability(self, match_data, team1, team2):
+    def _calculate_over_under_probability_all(self, match_data, team1, team2):
+        """Calculates Over/Under probabilities for lines 0.5, 1.5, 2.5, 3.5, 4.5"""
         strength1, avg1 = self.get_team_strength_and_avg(team1)
         strength2, avg2 = self.get_team_strength_and_avg(team2)
-        home_score = int(match_data.get("match_hometeam_score", 0))
-        away_score = int(match_data.get("match_awayteam_score", 0))
-        minute = match_data.get("match_status", "0")
+        home_score = match_data['goals']['home']
+        away_score = match_data['goals']['away']
+        minute = match_data['fixture']['status']['elapsed']
 
         progress_percent = self._get_match_progress(minute) / 90
         
-        expected_goals = (avg1 + avg2) * (1 - (0.5 - progress_percent) * 0.5)
+        # Base Expected Goals (adjusted for match progress)
+        expected_goals_full_time = (avg1 + avg2) * (1 - (0.5 - progress_percent) * 0.5)
         total_goals = home_score + away_score
         
-        over_25_prob_base = 65 if expected_goals > 2.8 else 50 if expected_goals > 2.2 else 35
-        
-        goal_rate_factor = total_goals / (expected_goals * progress_percent) if progress_percent > 0 else 1.0
-        
-        if goal_rate_factor > 1.2 and total_goals < 3: 
-            over_25_prob = over_25_prob_base + (goal_rate_factor - 1) * 20
-            reason = "Goals expected to rise; current goal rate is slightly slow despite high pre-match expectation."
-        elif goal_rate_factor < 0.8 and total_goals < 2 and progress_percent > 0.6: 
-            over_25_prob = over_25_prob_base * goal_rate_factor * 0.8
-            reason = "Low goal rate and late stage suggests Under 2.5 is now favored."
-        else:
-            over_25_prob = over_25_prob_base + random.uniform(-5, 5)
-            reason = "Goal rate is balanced with pre-match expectation."
+        def poisson_prob_over(expected_lambda, current_goals, line_goal):
+            goals_needed = int(line_goal + 0.5) 
+            target_remaining_goals = max(0, goals_needed - current_goals)
+            remaining_lambda = expected_lambda * (1 - progress_percent)
             
-        over_25_prob = min(99, max(1, over_25_prob))
-        under_25_prob = 100 - over_25_prob
-        
-        return over_25_prob, under_25_prob, reason
-        
+            if remaining_lambda <= 0.1 and target_remaining_goals > 0: return 1.0
+            
+            if current_goals >= goals_needed:
+                if goals_needed == 0: return 99.0 
+                return 95.0 + random.uniform(0, 4.9)
+
+            if target_remaining_goals == 0:
+                 return 99.0 + random.uniform(0, 0.9)
+
+            # Simplified probability logic for remaining goals
+            if target_remaining_goals == 1:
+                prob = 100 - (100 * (remaining_lambda / (remaining_lambda + 1)))
+            elif target_remaining_goals > 1:
+                prob = remaining_lambda ** target_remaining_goals * 10 
+            else:
+                prob = 50.0
+
+            match_tempo_factor = total_goals / (expected_goals_full_time * progress_percent) if progress_percent > 0.1 else 1.0
+            
+            if goals_needed >= 3:
+                prob *= max(0.8, min(1.3, match_tempo_factor))
+                
+            prob = max(1.0, min(99.0, prob))
+            return prob
+
+        # --- Calculate all lines ---
+        all_probs = []
+        for line in [0.5, 1.5, 2.5, 3.5, 4.5]:
+            over_prob = poisson_prob_over(expected_goals_full_time, total_goals, line)
+            under_prob = 100.0 - over_prob
+            
+            if over_prob >= under_prob:
+                best_pred = f"Over {line} Goals"
+                confidence = over_prob
+            else:
+                best_pred = f"Under {line} Goals"
+                confidence = under_prob
+                
+            all_probs.append({
+                "line": line,
+                "over_prob": over_prob,
+                "under_prob": under_prob,
+                "best_pred": best_pred,
+                "confidence": confidence
+            })
+            
+        return all_probs
+
     def _predict_correct_score(self, match_data, team1, team2):
-        home_score = int(match_data.get("match_hometeam_score", 0))
-        away_score = int(match_data.get("match_awayteam_score", 0))
+        home_score = match_data['goals']['home']
+        away_score = match_data['goals']['away']
         strength1, avg1 = self.get_team_strength_and_avg(team1)
         strength2, avg2 = self.get_team_strength_and_avg(team2)
         
@@ -717,7 +654,7 @@ class EnhancedFootballAI:
             predicted_score_1 = f"{home_score}-{away_score+1}" 
             predicted_score_2 = f"{home_score}-{away_score}"
             
-        progress = self._get_match_progress(match_data.get("match_status", "0"))
+        progress = self._get_match_progress(match_data['fixture']['status']['elapsed'])
         
         if progress > 70:
             prob_current = 40 + (progress - 70) * 1.5
@@ -744,22 +681,22 @@ class EnhancedFootballAI:
         return minutes
 
     def generate_combined_prediction(self, match_data, team1, team2, send_alert=False):
-        minute = match_data.get("match_status", "0")
+        minute = match_data['fixture']['status']['elapsed']
         
-        if minute == "FT":
+        if match_data['fixture']['status']['short'] in ['FT', 'AET', 'PEN']:
             return "🏁 Match is over. Final Score-based Prediction not applicable.", None
         
         prob1, prob2, draw_prob = self._calculate_1x2_probability(match_data, team1, team2)
-        over_25_prob, under_25_prob, goals_reason = self._calculate_over_under_probability(match_data, team1, team2)
+        
+        # --- NEW: Calculate all O/U lines ---
+        all_ou_probs = self._calculate_over_under_probability_all(match_data, team1, team2)
+        best_ou_market = max(all_ou_probs, key=lambda x: x['confidence'])
         
         max_prob_1x2 = max(prob1, prob2, draw_prob)
         if max_prob_1x2 == prob1: winner = team1; market_1x2 = f"{team1} to WIN"
         elif max_prob_1x2 == prob2: winner = team2; market_1x2 = f"{team2} to WIN"
         else: winner = "DRAW"; market_1x2 = "DRAW"
             
-        max_prob_OU = max(over_25_prob, under_25_prob)
-        market_OU = f"Over 2.5 Goals" if max_prob_OU == over_25_prob else f"Under 2.5 Goals"
-        
         alert_to_send = None
         
         if send_alert and OWNER_CHAT_ID:
@@ -769,87 +706,51 @@ class EnhancedFootballAI:
                     "prediction": market_1x2,
                     "confidence": max_prob_1x2
                 }
-            elif max_prob_OU >= 85:
+            elif best_ou_market['confidence'] >= 85:
                 alert_to_send = {
-                    "market": market_OU,
-                    "prediction": market_OU,
-                    "confidence": max_prob_OU
+                    "market": best_ou_market['best_pred'],
+                    "prediction": best_ou_market['best_pred'],
+                    "confidence": best_ou_market['confidence']
                 }
+
+        # Format O/U details for the report
+        ou_report = "\n"
+        for p in all_ou_probs:
+            ou_report += f"• O/U {p['line']} Goals: {p['over_prob']:.1f}% / {p['under_prob']:.1f}% ({p['best_pred']} - {p['confidence']:.1f}%)\n"
 
         result = f"""
 **Pre-match & Live Score Model:**
 • {team1} WIN: {prob1:.1f}%
 • {team2} WIN: {prob2:.1f}%  
 • Draw: {draw_prob:.1f}%
-• Over 2.5 Goals: {over_25_prob:.1f}%
-• Under 2.5 Goals: {under_25_prob:.1f}%
 
-🏆 **Current Verdict ({minute}' / {match_data.get('match_hometeam_score', '0')}-{match_data.get('match_awayteam_score', '0')}):**
+**Detailed Goal Predictions:**
+{ou_report}
+
+🏆 **Current Verdict ({minute}' / {match_data['goals']['home']}-{match_data['goals']['away']}):**
 • **Match Winner:** **{winner.upper()}** ({max_prob_1x2:.1f}%)
-• **Goals:** **{market_OU.upper()}** ({max_prob_OU:.1f}%)
+• **Goals (Best O/U):** **{best_ou_market['best_pred'].upper()}** ({best_ou_market['confidence']:.1f}%)
 
 💡 **Score-based Insight:**
 {match_analyzer.generate_simple_score_based_prediction(match_data)}
 """
         return result, alert_to_send
 
+
     def handle_prediction(self, message):
-        teams = []
-        for team_key in self.team_data:
-            if team_key in message.lower(): teams.append(team_key)
-        
-        if len(teams) >= 2:
-            team1_name = teams[0]; team2_name = teams[1]
-            prob1, prob2, draw_prob = self._calculate_1x2_probability({}, team1_name, team2_name)
-            strength1, avg1 = self.get_team_strength_and_avg(team1_name)
-            strength2, avg2 = self.get_team_strength_and_avg(team2_name)
-            expected_goals = avg1 + avg2
-            
-            max_prob = max(prob1, prob2, draw_prob)
-            if max_prob == prob1: winner = team1_name.title()
-            elif max_prob == prob2: winner = team2_name.title()
-            else: winner = "Draw"
-            
-            return f"""
-🎯 **PREDICTION: {team1_name.upper()} vs {team2_name.upper()}**
-
-📊 **Probabilities (Pre-match Strength):**
-• {team1_name.title()}: {prob1:.1f}%
-• {team2_name.title()}: {prob2:.1f}%  
-• Draw: {draw_prob:.1f}%
-• Expected Total Goals: {expected_goals:.2f}
-
-🏆 **Most Likely: {winner.upper()}**
-
-⚠️ *This is a pre-match strength prediction. Use '/analysis {team1_name} vs {team2_name}' for live updates!*
-"""
-        else:
-            return "Please specify two teams for prediction. Example: '/predict Manchester City vs Liverpool'"
-
-    def get_api_status_text(self):
-        status = api_manager.get_api_status()
-        
-        return f"""
-🌐 **API STATUS (Single Source)**
-
-🔵 **API-Football (HTTP):**
-• Status: {status['api_football']['status']}
-• Matches: {status['api_football']['match_count']}
-• Updated: {status['api_football']['last_update']}
-
-💡 **Only HTTP API is currently active for stability.**
-"""
+        return "⚠️ Prediction command is replaced by: \n\n`/analysis [Team Name]` for detailed report \n\nOR\n\n `/expert_bet [Team Name]` for a high-confidence prediction."
 
     def handle_api_status(self):
-        return self.get_api_status_text()
-    
+        return api_manager.get_api_status_text()
+        
+    def get_api_status_text(self):
+        return api_manager.get_api_status_text()
+
     def analyze_and_select_expert_bet(self, match_data, home_team, away_team):
-        home_prev_data = get_mock_previous_data(home_team)
-        away_prev_data = get_mock_previous_data(away_team)
+        """Analyzes all markets and selects the SINGLE highest confidence bet (85%+)"""
         analysis = match_analyzer.analyze_match_trends(match_data)
         stats = match_analyzer.get_match_statistics_dict(match_data) 
-        minute = match_data.get("match_status", "0")
-        current_score = f"{match_data.get('match_hometeam_score', '0')}-{match_data.get('match_awayteam_score', '0')}"
+        minute = match_data['fixture']['status']['elapsed']
         all_market_predictions = []
         
         # A. 1️⃣ Match Winner Probability (1X2)
@@ -858,30 +759,37 @@ class EnhancedFootballAI:
         winner_pred = f"{home_team} WIN" if max_prob_1x2 == prob1 else f"{away_team} WIN" if max_prob_1x2 == prob2 else "DRAW"
         all_market_predictions.append({"market": "Match Winner (1X2)", "prediction": winner_pred, "confidence": max_prob_1x2, "reason": "Live Score Adjustment applied.", "odds_range": "1.40-3.00"})
 
-        # B. 2️⃣ Over/Under Goals (2.5)
-        over_25_prob, under_25_prob, goals_reason = self._calculate_over_under_probability(match_data, home_team, away_team)
-        max_prob_OU = max(over_25_prob, under_25_prob)
-        ou_pred = "Over 2.5 Goals" if max_prob_OU == over_25_prob else "Under 2.5 Goals"
-        all_market_predictions.append({"market": "Over/Under 2.5 Goals", "prediction": ou_pred, "confidence": max_prob_OU, "reason": goals_reason, "odds_range": "1.65-2.05"})
+        # B. 2️⃣ Multi Over/Under Goals (0.5, 1.5, 2.5, 3.5, 4.5)
+        all_ou_probs = self._calculate_over_under_probability_all(match_data, home_team, away_team)
         
-        # C. 3️⃣ BTTS (Both Teams To Score)
+        # Find the single best O/U market across all lines
+        best_ou_market = max(all_ou_probs, key=lambda x: x['confidence'])
+        all_market_predictions.append({
+            "market": f"Goals ({best_ou_market['line']})",
+            "prediction": best_ou_market['best_pred'],
+            "confidence": best_ou_market['confidence'],
+            "reason": f"Best O/U found at line {best_ou_market['line']} based on live tempo.",
+            "odds_range": "1.40-2.20"
+        })
+        
+        # C. 3️⃣ BTTS (Both Teams To Score) 
         base_btts_prob = 50 + ((self.get_team_strength_and_avg(home_team)[0] + self.get_team_strength_and_avg(away_team)[0]) / 20) * 0.5 
-        if (int(match_data.get('match_hometeam_score', 0)) + int(match_data.get('match_awayteam_score', 0))) >= 2 and analysis['goal_difference'] < 2: live_btts_factor = 1.25 
+        if (match_data['goals']['home'] + match_data['goals']['away']) >= 2 and analysis['goal_difference'] < 2: live_btts_factor = 1.25 
         elif stats.get("Shots on Goal", 0) > 8: live_btts_factor = 1.15
         else: live_btts_factor = 0.95
         
         btts_prob = min(99, base_btts_prob * live_btts_factor)
         btts_pred = "Yes (BTTS)" if btts_prob >= 50 else "No (BTTS)"
         btts_conf = btts_prob if btts_prob >= 50 else 100 - btts_prob
-        all_market_predictions.append({"market": "Both Teams To Score (BTTS)", "prediction": btts_pred, "confidence": btts_conf, "reason": "Live total shots on goal: {stats.get('Shots on Goal', 0)}.", "odds_range": "1.75-2.00"})
+        all_market_predictions.append({"market": "Both Teams To Score (BTTS)", "prediction": btts_pred, "confidence": btts_conf, "reason": f"Live total shots on goal: {stats.get('Shots on Goal', 0)}.", "odds_range": "1.75-2.00"})
         
         # D. 4️⃣ Last 10 Minute Goal Chance
         progress = self._get_match_progress(minute)
         if progress < 80: late_goal_prob = 50.0
         else:
             base = 65.0
-            score_diff = abs(int(match_data.get('match_hometeam_score', 0)) - int(match_data.get('match_awayteam_score', 0)))
-            total_goals = int(match_data.get('match_hometeam_score', 0)) + int(match_data.get('match_awayteam_score', 0))
+            score_diff = abs(match_data['goals']['home'] - match_data['goals']['away'])
+            total_goals = match_data['goals']['home'] + match_data['goals']['away']
             if score_diff <= 1 and total_goals >= 2: base += 15
             elif score_diff >= 3: base -= 10
             late_goal_prob = min(95, base + random.uniform(-5, 5))
@@ -905,6 +813,11 @@ class EnhancedFootballAI:
         
         # 4. Final Output Generation
         
+        # --- Detailed O/U Breakdown for the Report ---
+        ou_details_report = "📊 **Detailed O/U Probabilities:**\n"
+        for p in all_ou_probs:
+            ou_details_report += f"• O/U {p['line']}: {p['over_prob']:.1f}% / {p['under_prob']:.1f}% (Best: {p['best_pred']} @ {p['confidence']:.1f}%)\n"
+        
         if best_bet:
             risk_note = "Standard market risks apply."
             if stats.get('Red Cards', 0) > 0: risk_note = "HIGH RISK: Red Card issued, game dynamics changed."
@@ -921,9 +834,9 @@ class EnhancedFootballAI:
 ---
 📋 **DETAILED MARKET BREAKDOWN:**
 1. **Match Winner (1X2):** H {prob1:.1f}% | D {draw_prob:.1f}% | A {prob2:.1f}%
-2. **Over/Under 2.5:** Over {over_25_prob:.1f}% | Under {under_25_prob:.1f}%
-3. **BTTS (Yes/No):** Yes {btts_prob:.1f}% | No {(100 - btts_prob):.1f}%
+2. **BTTS (Yes/No):** Yes {btts_prob:.1f}% | No {(100 - btts_prob):.1f}%
 4. **Late Goal (80'+):** Yes {late_goal_prob:.1f}% | No {(100 - late_goal_prob):.1f}%
+{ou_details_report}
 
 **Correct Score Prediction (Top 2):**
 • {top_2_scores[0]['score']} ({top_2_scores[0]['prob']:.1f}%)
@@ -938,12 +851,14 @@ class EnhancedFootballAI:
 ❌ **NO 85%+ BET FOUND** ❌
 **Match:** {home_team} vs {away_team} ({minute}')
 
-**Reason:** No single market (1X2, O/U 2.5, BTTS, Late Goal) currently meets the 85.0% confidence threshold.
+**Reason:** No single market (1X2, Goals, BTTS, Late Goal) currently meets the 85.0% confidence threshold.
 
 **Highest Confidence Found:**
 • Market: {all_market_predictions[0]['market']}
 • Prediction: {all_market_predictions[0]['prediction']}
 • Confidence: {all_market_predictions[0]['confidence']:.1f}%
+---
+{ou_details_report}
 
 💡 *Wait for a significant change (e.g., Red Card, new goal, 75+ minute) and try again.*
 """
@@ -959,11 +874,10 @@ class EnhancedFootballAI:
         if not match_data:
             return "❌ براہ کرم واضح ٹیم کا نام لکھیں یا تصدیق کریں کہ میچ لائیو ہے۔ مثال: `/expert_bet Man City`"
         
-        minute = match_data.get("match_status", "0")
-        if minute == "FT": return "❌ یہ میچ ختم ہو چکا ہے۔ Expert Bet صرف لائیو میچز پر دستیاب ہے۔"
+        if match_data['fixture']['status']['short'] in ['FT', 'AET', 'PEN']: return "❌ یہ میچ ختم ہو چکا ہے۔ Expert Bet صرف لائیو میچز پر دستیاب ہے۔"
         
-        home_team = match_data.get("match_hometeam_name", "Home")
-        away_team = match_data.get("match_awayteam_name", "Away")
+        home_team = match_data['teams']['home']['name']
+        away_team = match_data['teams']['away']['name']
         
         return self.analyze_and_select_expert_bet(match_data, home_team, away_team)
     
@@ -979,269 +893,142 @@ class EnhancedFootballAI:
         
         return "❓ میں آپ کی بات سمجھ نہیں پایا۔ براہ کرم کمانڈ استعمال کریں: `/live`, `/today`, `/analysis Man City`, یا `/expert_bet Real Madrid`."
 
-football_ai = EnhancedFootballAI()
+# Instantiate the AI
+ai_assistant = EnhancedFootballAI()
 
-# -------------------------
-# TELEGRAM HANDLERS (Same as V4, but without @bot.message_handler)
-# -------------------------
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-    # Same as V4
-    welcome_text = """
-🤖 **SUPER STABLE FOOTBALL ANALYSIS BOT (V5 Webhook)** ⚽
+# --- 4. Auto-Update/Alert Thread ---
 
-🚀 **WEBHOOK MODE ACTIVE!** (Optimized for Railway/Free Tiers)
-
-🔍 **CORE COMMANDS:**
-• `/live`: Real-time scores & updates ⏱️
-• `/today`: Today's full match schedule 📅
-• `/analysis [Team]`: Detailed 6-market analysis report 📊
-• `/expert_bet [Team]`: **85%+ Confirmed Bet** (Single Market Only) 💰
-
-⚡ **UTILITY COMMANDS:**
-• `/status`: API connection status
-• `/hits`: API hit statistics
-
-⚠️ **NOTE:** Auto-Alerts for 85%+ Confidence are sent automatically to the Owner's Chat ID.
+def auto_updater_thread():
+    """Fetches data regularly to keep the cache fresh and check for alerts."""
+    print("🚀 Auto-Updater thread started.")
+    while True:
+        try:
+            # 1. Fetch data to keep cache fresh and container awake (important for Heroku/Railway paid tiers)
+            api_manager.fetch_api_football_matches(match_live_only=False)
+            
+            # 2. Check for alerts (This can be resource intensive, so do it less often)
+            if random.random() < 0.3: # Only run alert check 30% of the time to save API hits
+                live_matches, _ = fetch_live_matches_http()
+                
+                for match in live_matches:
+                    minute = match['fixture']['status']['elapsed']
+                    if minute and int(minute) < 80: # Alert only for ongoing matches before 80th minute
+                        home_team = match['teams']['home']['name']
+                        away_team = match['teams']['away']['name']
+                        
+                        _, alert = ai_assistant.generate_combined_prediction(match, home_team, away_team, send_alert=True)
+                        
+                        if alert:
+                            alert_message = f"""
+🚨 **LIVE ALERT: HIGH CONFIDENCE BET** 🚨
+⚽ **Match:** {home_team} vs {away_team} ({minute}')
+🎯 **Prediction:** **{alert['prediction']}**
+💰 **Confidence:** **{alert['confidence']:.1f}%**
 """
-    bot.reply_to(message, welcome_text, parse_mode='Markdown')
-
-@bot.message_handler(commands=['live'])
-def send_live_matches(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        response = football_ai.handle_live_matches()
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
-@bot.message_handler(commands=['today']) 
-def send_todays_matches(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        response = football_ai.handle_todays_matches()
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error getting today's schedule: {str(e)}")
-
-@bot.message_handler(commands=['analysis'])
-def send_detailed_analysis(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        command_text = message.text.split(' ', 1)
-        query = command_text[1] if len(command_text) > 1 else "analysis" 
-        response = football_ai.handle_detailed_analysis(query)
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
-@bot.message_handler(commands=['hits', 'stats'])
-def send_hit_stats(message):
-    try:
-        stats = hit_counter.get_hit_stats()
-        bot.reply_to(message, stats, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
-@bot.message_handler(commands=['status', 'api'])
-def send_api_status(message):
-    try:
-        response = football_ai.handle_api_status()
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
-
-@bot.message_handler(commands=['predict'])
-def handle_predict_command(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        command_text = message.text.split(' ', 1)
-        query = command_text[1] if len(command_text) > 1 else ""
+                            if OWNER_CHAT_ID:
+                                try:
+                                    bot.send_message(OWNER_CHAT_ID, alert_message, parse_mode='Markdown')
+                                    print(f"Alert sent for: {home_team} vs {away_team}")
+                                except Exception as e:
+                                    print(f"Error sending alert to owner: {e}")
+                                    
+        except Exception as e:
+            print(f"Auto-updater error: {e}")
         
-        if query: response = football_ai.handle_prediction(query)
-        else: response = """
-🎯 **MATCH PREDICTIONS (PRE-MATCH)**
-Ask me like: "/predict Manchester City vs Liverpool"
-I'll analyze team strengths and give you probabilities! 📊
-"""
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error: {str(e)}")
+        time.sleep(120) # Wait for 120 seconds (2 minutes)
 
-@bot.message_handler(commands=['expert_bet']) 
-def send_expert_bet(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        command_text = message.text.split(' ', 1)
-        query = command_text[1] if len(command_text) > 1 else "" 
-        
-        if not query:
-             bot.reply_to(message, "💡 **EXPERT BET**\n\nبراہ کرم میچ کی پریڈکشن کے لیے ایک لائیو ٹیم کا نام شامل کریں۔\nمثال: `/expert_bet Man City`")
-             return
-             
-        response = football_ai.handle_expert_bet(query)
-        bot.reply_to(message, response, parse_mode='Markdown')
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error running expert analysis: {str(e)}")
+# Start the auto-updater thread
+# updater_thread = threading.Thread(target=auto_updater_thread, daemon=True)
+# updater_thread.start()
 
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    try:
-        logging.info(f"Message from {message.from_user.id}: {message.text}")
-        bot.send_chat_action(message.chat.id, 'typing')
-        time.sleep(0.5) 
-        response = football_ai.get_response(message.text)
-        bot.reply_to(message, response, parse_mode='Markdown')
-        
-    except Exception as e:
-        logging.error(f"Message handler error: {e}")
-        bot.reply_to(message, "❌ Sorry, error occurred. Please try again!")
+# --- 5. Telegram Webhook Handlers ---
 
-# -------------------------
-# NEW: WEBHOOK SETUP (Flask)
-# -------------------------
+@app.route('/', methods=['GET'])
+def index():
+    return "Football Analysis Bot V6 is Running! Use the Webhook URL to interact.", 200
+
 @app.route('/' + BOT_TOKEN, methods=['POST'])
 def webhook():
-    """Handles Telegram updates sent via Webhook"""
+    """Webhook endpoint for Telegram updates."""
     if request.headers.get('content-type') == 'application/json':
         json_string = request.get_data().decode('utf-8')
         update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '!', 200 # Telegram expects a quick 200 response
-    return 'Hello, I am V5 Webhook Bot!', 200
-
-
-# -------------------------
-# AUTO LIVE ALERT SYSTEM (7 Minute Interval)
-# -------------------------
-def auto_live_alert_system():
-    """Checks live matches every 7 minutes for 85%+ confidence alerts"""
-    if not OWNER_CHAT_ID:
-        logging.warning("Auto Alert System Disabled: OWNER_CHAT_ID not configured.")
-        return
-
-    while True:
-        try:
-            raw_matches, source = fetch_live_matches_http()
-            live_matches = [m for m in raw_matches if m.get('match_live') == '1' and m.get('match_status').isdigit() and int(m.get('match_status')) < 90]
-            
-            if live_matches:
-                logging.info(f"Auto Alert: Analyzing {len(live_matches)} live matches...")
-                for match in live_matches:
-                    home_team = match.get("match_hometeam_name", "Home")
-                    away_team = match.get("match_awayteam_name", "Away")
-                    league = match.get("league_name", "Unknown League")
-                    minute = match.get("match_status", "0")
-                    score = f"{match.get('match_hometeam_score', '0')}-{match.get('match_awayteam_score', '0')}"
-                    
-                    _, alert_result = football_ai.generate_combined_prediction(match, home_team, away_team, send_alert=True)
-                    
-                    if alert_result:
-                        alert_message = f"""
-🔥 **85%+ CONFIDENCE LIVE ALERT!** 🔥
-📢 **MATCH:** {home_team} vs {away_team}
-🏆 **LEAGUE:** {league}
-⏱️ **MINUTE:** {minute}' | **SCORE:** {score}
-
-🎯 **MARKET:** {alert_result['market'].upper()}
-✅ **PREDICTION:** **{alert_result['prediction'].upper()}**
-📊 **CONFIDENCE:** {alert_result['confidence']:.1f}%
-
-⚠️ *Betting is risky. Use your own discretion.*
-"""
-                        logging.info(f"Alert SENT: {alert_result['prediction']} @ {alert_result['confidence']:.1f}%")
-                        bot.send_message(OWNER_CHAT_ID, alert_message, parse_mode='Markdown')
-                        
-        except Exception as e:
-            logging.error(f"Auto Live Alert System Error: {e}")
         
-        time.sleep(7 * 60) # Wait for 7 minutes
-
-# -------------------------
-# AUTO UPDATER (HTTP Only)
-# -------------------------
-def auto_updater():
-    """Auto-update matches every 2 minutes using HTTP API"""
-    while True:
-        try:
-            can_make, reason = hit_counter.can_make_request()
-            if can_make:
-                matches = fetch_api_football_matches(match_live_only=True)
-                if matches:
-                    api_manager.update_api_football_matches(matches)
-                logging.info(f"HTTP Cache Updated. Matches: {len(matches)}")
-            else:
-                logging.warning(f"HTTP API call blocked: {reason}")
-            
-            time.sleep(120) # Refresh every 2 minutes
-            
-        except Exception as e:
-            logging.error(f"Auto-updater error: {e}")
-            time.sleep(300)
-
-# -------------------------
-# STARTUP FUNCTION (Webhook Setup)
-# -------------------------
-def set_webhook():
-    """Set the Telegram webhook URL"""
-    webhook_path = f'/{BOT_TOKEN}'
-    full_webhook_url = WEBHOOK_URL.rstrip('/') + webhook_path
-    
-    # 1. Delete previous webhook if any
-    bot.remove_webhook()
-    
-    # 2. Set the new webhook
-    success = bot.set_webhook(url=full_webhook_url)
-    
-    if success:
-        logging.info(f"✅ Webhook successfully set to: {full_webhook_url}")
+        if update.message:
+            try:
+                # Process the message and get the AI response
+                message_text = update.message.text
+                chat_id = update.message.chat.id
+                
+                print(f"Received message from {chat_id}: {message_text}")
+                
+                # Get the response from the AI assistant
+                response_text = ai_assistant.get_response(message_text)
+                
+                # Send the response back
+                bot.send_message(chat_id, response_text, parse_mode='Markdown')
+                
+            except Exception as e:
+                print(f"Error processing message: {e}")
+                # Optional: Send a fallback error message
+                bot.send_message(chat_id, "❌ **Error processing your request.** Please try a command like /live or /today.", parse_mode='Markdown')
+                
+        return 'OK', 200
     else:
-        logging.error("❌ Failed to set webhook. Check your WEBHOOK_URL/BOT_TOKEN.")
+        abort(403) # Forbidden for non-JSON requests
+
+# --- 6. Startup ---
+
+def set_webhook():
+    """Sets the Telegram webhook URL."""
+    s = bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+    if s:
+        print(f"✅ Webhook successfully set to: {WEBHOOK_URL}/{BOT_TOKEN}")
+    else:
+        print("❌ Webhook setup failed.")
         
-    return success
-
-def start_bot():
-    """Initializes and starts all threads and Flask server."""
-    logging.info("🚀 Starting SUPER STABLE Football Analysis Bot V5 (WEBHOOK MODE)...")
-    
-    # Start background threads (These are independent of Flask/Webhook)
-    updater_thread = threading.Thread(target=auto_updater, daemon=True)
-    updater_thread.start()
-    logging.info("✅ HTTP Auto-Updater (2 min) started!")
-    
-    alert_thread = threading.Thread(target=auto_live_alert_system, daemon=True)
-    alert_thread.start()
-    logging.info("✅ Auto Live Alert System (7 min check) started!")
-    
-    time.sleep(5) 
-
-    # Set the webhook URL before starting the Flask server
-    if not set_webhook():
-        logging.error("Startup Failed: Webhook setting failed.")
-        return
-
-    # Send startup message
-    api_status = api_manager.get_api_status()
-    if OWNER_CHAT_ID:
-        startup_msg = f"""
-🤖 **SUPER STABLE BOT STARTED! (V5)**
-
-**✅ WEBHOOK MODE ACTIVE!** (Polling Disabled)
-• Telegram Webhook: **{WEBHOOK_URL}**
-• **`/expert_bet`** is active!
-
-🌐 **Current Status:**
-• 🔵 HTTP API: {api_status['api_football']['status']}
-• Matches Loaded: {api_status['api_football']['match_count']}
-
-🔥 **Ready for analysis! Use /today to check the schedule.**
-"""
-        bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
-
-    # Start Flask Web Server
-    logging.info(f"Starting Flask server on port {PORT}...")
-    # NOTE: '0.0.0.0' is required for container deployments like Railway/Heroku
-    app.run(host='0.0.0.0', port=PORT)
-
 if __name__ == '__main__':
-    start_bot()
+    # Set webhook on startup
+    set_webhook()
+    
+    # Start the auto-updater thread separately
+    updater_thread = threading.Thread(target=auto_updater_thread, daemon=True)
+    updater_thread.start()
+
+    # Start Flask/Gunicorn server
+    # Note: On Heroku/Railway, Gunicorn (from Procfile) will handle the server start,
+    # but for local testing, this runs the Flask development server:
+    # app.run(host='0.0.0.0', port=PORT, debug=False)
+    
+    # When using Gunicorn, the Procfile should be:
+    # web: gunicorn your_bot_file_name:app --bind 0.0.0.0:$PORT
+    # To run locally with Gunicorn:
+    from gunicorn.app.base import BaseApplication
+    
+    class FlaskApplication(BaseApplication):
+        def __init__(self, app, options=None):
+            self.options = options or {}
+            self.application = app
+            super().__init__()
+
+        def load_config(self):
+            config = {key: value for key, value in self.options.items()
+                      if key in self.cfg.settings and value is not None}
+            for key, value in config.items():
+                self.cfg.set(key.lower(), value)
+
+        def load(self):
+            return self.application
+
+    gunicorn_options = {
+        'bind': f'0.0.0.0:{PORT}',
+        'workers': 4, # Recommended workers for stability
+        'worker_class': 'sync',
+        'timeout': 60,
+        'limit_request_line': 8190,
+        'limit_request_fields': 100,
+        'limit_request_field_size': 8190
+    }
+
+    print(f"Starting Gunicorn server on port {PORT}")
+    FlaskApplication(app, gunicorn_options).run()

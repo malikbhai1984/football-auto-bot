@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import pytz
 import logging
 import json
+from flask import Flask, request # <--- Flask is now required
 
 # -------------------------
 # Load environment variables & Basic Setup
@@ -20,56 +21,42 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
 API_KEY = os.environ.get("API_KEY") 
 
-# Check for essential variables
+# Webhook Configuration (NEW!)
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+PORT = os.environ.get("PORT", 8080) 
+
+# Checks
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN missing! Please set it in your .env file.")
-if not API_KEY:
-    print("⚠️ WARNING: API_KEY (API-Football) missing. Match fetching may fail.")
+if not WEBHOOK_URL:
+    raise ValueError("❌ WEBHOOK_URL missing! Set your Railway domain in .env.")
 
 try:
-    if OWNER_CHAT_ID:
-        OWNER_CHAT_ID = int(OWNER_CHAT_ID)
+    if OWNER_CHAT_ID: OWNER_CHAT_ID = int(OWNER_CHAT_ID)
 except (ValueError, TypeError):
     OWNER_CHAT_ID = None 
-    print("⚠️ WARNING: OWNER_CHAT_ID is missing or invalid. Auto-alerts will be disabled.")
+    print("⚠️ WARNING: OWNER_CHAT_ID is missing or invalid.")
     
 # Set up environment
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# ✅ SINGLE API CONFIGURATION (API-Football HTTP Only)
-API_FOOTBALL_URL = "https://apiv3.apifootball.com"
-PAKISTAN_TZ = pytz.timezone('Asia/Karachi')
-
-def get_current_date_pakt():
-    """Get current date in Pakistan time (YYYY-MM-DD)"""
-    return datetime.now(PAKISTAN_TZ).strftime('%Y-%m-%d')
+app = Flask(__name__) # Initialize Flask app
 
 # -------------------------
-# GLOBAL UTILITIES & MOCK DATA (Unchanged Core Logic)
+# Core Bot Logic Classes (MatchAnalysis, HTTPAPIManager, GlobalHitCounter, EnhancedFootballAI) 
+# --- [ ALL CORE LOGIC REMAINS IDENTICAL TO V4/V3, ENSURING FUNCTIONALITY ] ---
 # -------------------------
-def get_mock_previous_data(team_name, count=5):
-    """Generates mock performance data for trend analysis."""
-    results = random.choices(['W', 'L', 'D'], weights=[40, 30, 30], k=count)
-    btts_count = sum([1 for r in results if r in ['W', 'D']])
-    recent_form = "".join(results)
-    home_goals = random.randint(10, 15)
-    away_goals = random.randint(5, 12)
-    return {
-        "form": recent_form,
-        "goals_scored": home_goals,
-        "goals_conceded": away_goals,
-        "btts_rate": f"{btts_count*20}%", 
-        "avg_goals_per_game": (home_goals + away_goals) / count
-    }
 
-# -------------------------
-# ENHANCED MATCH ANALYSIS SYSTEM (Copied from V3)
-# -------------------------
+# >>> PASTE THE CLASS DEFINITIONS FROM V4 HERE <<<
+# (MatchAnalysis, HTTPAPIManager, GlobalHitCounter, EnhancedFootballAI, and all utility functions)
+# For brevity, I am instructing you to paste the unchanged core logic from V4/V3 here.
+
+# --- [ All utility functions and Class definitions from V4 (e.g., get_current_date_pakt, get_mock_previous_data, LEAGUE_CONFIG, etc.) should be pasted here ] ---
+
+# ... [ PASTE V4 CODE HERE - CONTINUED ] ...
 class MatchAnalysis:
-    # --- [ Match Analysis Logic (analysis_match_trends, analyze_tempo, get_basic_match_info, 
-    #       get_match_statistics, get_live_insights, generate_simple_score_based_prediction) remains identical to V3 ] ---
+    # ... (all methods from V4) ...
     def analyze_match_trends(self, match_data):
         try:
             home_team = match_data.get("match_hometeam_name", "")
@@ -210,38 +197,68 @@ class MatchAnalysis:
             else:
                 leading_team = home_team if goal_difference > 0 else away_team
                 return f"✅ {leading_team} dominating\n❌ Big comeback needed"
-
-# Initialize Match Analysis
+                
 match_analyzer = MatchAnalysis()
+# ... [ HTTPAPIManager, GlobalHitCounter, LEAGUE_CONFIG, fetch_api_football_matches, fetch_live_matches_http, process_match_data ] ...
+# These are kept identical, just initializing here for context:
 
-# -------------------------
-# HTTP API MANAGER (Simplified and Robust)
-# -------------------------
+API_FOOTBALL_URL = "https://apiv3.apifootball.com"
+PAKISTAN_TZ = pytz.timezone('Asia/Karachi')
+
+def get_current_date_pakt():
+    return datetime.now(PAKISTAN_TZ).strftime('%Y-%m-%d')
+
+def get_mock_previous_data(team_name, count=5):
+    results = random.choices(['W', 'L', 'D'], weights=[40, 30, 30], k=count)
+    btts_count = sum([1 for r in results if r in ['W', 'D']])
+    recent_form = "".join(results)
+    home_goals = random.randint(10, 15)
+    away_goals = random.randint(5, 12)
+    return {
+        "form": recent_form,
+        "goals_scored": home_goals,
+        "goals_conceded": away_goals,
+        "btts_rate": f"{btts_count*20}%", 
+        "avg_goals_per_game": (home_goals + away_goals) / count
+    }
+
+LEAGUE_CONFIG = {
+    "152": {"name": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League", "priority": 1, "type": "domestic"},
+    "302": {"name": "🇪🇸 La Liga", "priority": 1, "type": "domestic"},
+    "207": {"name": "🇮🇹 Serie A", "priority": 1, "type": "domestic"},
+    "168": {"name": "🇩🇪 Bundesliga", "priority": 1, "type": "domestic"},
+    "176": {"name": "🇫🇷 Ligue 1", "priority": 1, "type": "domestic"},
+    "169": {"name": "🇳🇱 Eredivisie", "priority": 2, "type": "domestic"},
+    "262": {"name": "🇵🇹 Primeira Liga", "priority": 2, "type": "domestic"},
+    "149": {"name": "⭐ Champions League", "priority": 1, "type": "european"},
+    "150": {"name": "✨ Europa League", "priority": 2, "type": "european"},
+    "5": {"name": "🌍 World Cup Qualifiers", "priority": 1, "type": "worldcup"},
+}
+
+def get_league_name(league_id):
+    league_info = LEAGUE_CONFIG.get(str(league_id))
+    if league_info:
+        return league_info["name"]
+    return f"League {league_id}"
+
 class HTTPAPIManager:
-    
     def __init__(self):
         self.api_football_matches = []
         self.last_api_football_update = None
         
     def update_api_football_matches(self, matches):
-        """Update matches from API-Football"""
         self.api_football_matches = matches
         self.last_api_football_update = datetime.now()
         
     def get_live_matches(self):
-        """Get best available matches from API-Football (Cached)"""
         current_time = datetime.now()
-        
-        # Check if data is fresh (less than 120 seconds old)
         if (self.last_api_football_update and 
               (current_time - self.last_api_football_update).total_seconds() < 120 and 
               self.api_football_matches):
             return self.api_football_matches, "API_FOOTBALL"
-        
         return [], "NONE"
     
     def get_api_status(self):
-        """Get status of the API"""
         api_football_update_time = self.last_api_football_update.strftime("%H:%M:%S") if self.last_api_football_update else "Never"
         
         return {
@@ -253,7 +270,6 @@ class HTTPAPIManager:
         }
     
     def find_match_by_teams(self, team1, team2=None):
-        """Find specific match by team names (in live/cached data)"""
         all_matches = self.api_football_matches
         team1_lower = team1.lower()
         
@@ -268,15 +284,9 @@ class HTTPAPIManager:
                 
         return None
 
-# Initialize HTTP API Manager
 api_manager = HTTPAPIManager()
 
-# -------------------------
-# GLOBAL HIT COUNTER & API OPTIMIZER (Copied from V3)
-# -------------------------
 class GlobalHitCounter:
-    # --- [ Hit Counter Logic (record_hit, get_hit_stats, can_make_request) remains identical to V3 ] ---
-    
     def __init__(self):
         self.total_hits = 0
         self.daily_hits = 0
@@ -285,7 +295,6 @@ class GlobalHitCounter:
         self.last_reset = datetime.now()
         
     def record_hit(self):
-        """Record an API hit with timestamp"""
         current_time = datetime.now()
         
         if current_time.date() > self.last_reset.date():
@@ -303,7 +312,6 @@ class GlobalHitCounter:
         return True
     
     def get_hit_stats(self):
-        """Get comprehensive hit statistics"""
         now = datetime.now()
         remaining_daily = max(0, 100 - self.daily_hits)
         
@@ -341,48 +349,15 @@ class GlobalHitCounter:
         return stats
     
     def can_make_request(self):
-        """Check if we can make another API request"""
         if self.daily_hits >= 100:
             return False, "Daily limit reached"
-        
-        # NOTE: Reduced hourly limit caution for safety
         if self.hourly_hits >= 40:
             return False, "Hourly limit caution"
-        
         return True, "OK"
 
-# Initialize Global Hit Counter
 hit_counter = GlobalHitCounter()
 
-# -------------------------
-# LEAGUE CONFIGURATION (Copied from V3)
-# -------------------------
-LEAGUE_CONFIG = {
-    "152": {"name": "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League", "priority": 1, "type": "domestic"},
-    "302": {"name": "🇪🇸 La Liga", "priority": 1, "type": "domestic"},
-    "207": {"name": "🇮🇹 Serie A", "priority": 1, "type": "domestic"},
-    "168": {"name": "🇩🇪 Bundesliga", "priority": 1, "type": "domestic"},
-    "176": {"name": "🇫🇷 Ligue 1", "priority": 1, "type": "domestic"},
-    "169": {"name": "🇳🇱 Eredivisie", "priority": 2, "type": "domestic"},
-    "262": {"name": "🇵🇹 Primeira Liga", "priority": 2, "type": "domestic"},
-    "149": {"name": "⭐ Champions League", "priority": 1, "type": "european"},
-    "150": {"name": "✨ Europa League", "priority": 2, "type": "european"},
-    "5": {"name": "🌍 World Cup Qualifiers", "priority": 1, "type": "worldcup"},
-}
-
-def get_league_name(league_id):
-    """Get league name from ID"""
-    league_info = LEAGUE_CONFIG.get(str(league_id))
-    if league_info:
-        return league_info["name"]
-    return f"League {league_id}"
-
-# -------------------------
-# API-FOOTBALL HTTP CLIENT (Robust Network Handling)
-# -------------------------
 def fetch_api_football_matches(match_live_only=True):
-    """Fetch matches from API-Football HTTP API with better error handling"""
-    
     if not API_KEY:
         logging.error("API_KEY is not set. Cannot fetch matches.")
         return []
@@ -401,7 +376,7 @@ def fetch_api_football_matches(match_live_only=True):
             today_date = get_current_date_pakt()
             url = f"{API_FOOTBALL_URL}/?action=get_events&from={today_date}&to={today_date}&APIkey={API_KEY}"
             
-        response = requests.get(url, timeout=20) # Increased timeout
+        response = requests.get(url, timeout=20) 
         
         if response.status_code == 200:
             data = response.json()
@@ -414,7 +389,6 @@ def fetch_api_football_matches(match_live_only=True):
                 
                 return data
             else:
-                # Handle API key limit/invalid response structure (often returns dict if limited)
                 if isinstance(data, dict) and 'error' in data.get('result', '').lower():
                     logging.error(f"API-Football Error in response: {data.get('result')}")
                 return []
@@ -432,12 +406,7 @@ def fetch_api_football_matches(match_live_only=True):
         logging.error(f"API-Football Fetch Error: {e}")
         return []
 
-# -------------------------
-# HTTP API MATCH FETCHER (Cache wrapper)
-# -------------------------
 def fetch_live_matches_http():
-    """Fetch live matches from API-Football and update cache"""
-    
     matches, source = api_manager.get_live_matches()
     if source == "API_FOOTBALL":
         return matches, source
@@ -449,13 +418,8 @@ def fetch_live_matches_http():
         
     return [], "NONE"
 
-# -------------------------
-# MATCH PROCESSOR (Copied from V3)
-# -------------------------
 def process_match_data(matches, live_only=True):
-    """Process raw match data for display"""
     if not matches: return []
-    
     processed_matches = []
     unique_matches = {}
     
@@ -470,14 +434,10 @@ def process_match_data(matches, live_only=True):
             minute = match.get("match_status", "0")
             league_name = match.get("league_name", "Unknown League")
             
-            if minute == "HT":
-                match_status = "HALF TIME"; display_minute = "HT"
-            elif minute == "FT":
-                match_status = "FULL TIME"; display_minute = "FT"
-            elif minute.isdigit():
-                match_status = "LIVE"; display_minute = f"{minute}'"
-            else:
-                match_status = "UPCOMING"; display_minute = match.get("match_time", "TBD")
+            if minute == "HT": match_status = "HALF TIME"; display_minute = "HT"
+            elif minute == "FT": match_status = "FULL TIME"; display_minute = "FT"
+            elif minute.isdigit(): match_status = "LIVE"; display_minute = f"{minute}'"
+            else: match_status = "UPCOMING"; display_minute = match.get("match_time", "TBD")
             
             is_live = match_status in ["LIVE", "HALF TIME"]
             
@@ -492,17 +452,11 @@ def process_match_data(matches, live_only=True):
                 "is_live": is_live, "source_icon": source_icon if is_live else "📅",
                 "raw_data": match  
             }
-            
         except Exception as e:
             continue
-    
     return list(unique_matches.values())
 
-# -------------------------
-# ENHANCED FOOTBALL AI (Core Logic Copied from V3)
-# -------------------------
 class EnhancedFootballAI:
-    # --- [ Team Data and all core prediction logic (1x2, O/U, BTTS, Expert Bet, etc.) remains identical to V3 ] ---
     def __init__(self):
         self.team_data = {
             "manchester city": {"strength": 95, "style": "attacking", "goal_avg": 2.5},
@@ -529,7 +483,6 @@ class EnhancedFootballAI:
         return fallback["strength"], fallback["goal_avg"]
         
     def get_response(self, message):
-        # ... (Handles command routing)
         message_lower = message.lower()
         
         if any(word in message_lower for word in ['live', 'current', 'scores', '/live']):
@@ -547,7 +500,7 @@ class EnhancedFootballAI:
         elif any(word in message_lower for word in ['api status', 'connection', 'status', '/status']):
             return self.handle_api_status()
         elif any(word in message_lower for word in ['hello', 'hi', 'hey', 'start', '/start']):
-            return "👋 Hello! I'm **SUPER STABLE Football Analysis AI V4**! ⚽\n\n🔍 **Stable HTTP API Only**\n\nTry: `/live`, `/today`, `/analysis man city`, or `/expert_bet real madrid`."
+            return "👋 Hello! I'm **SUPER STABLE Football Analysis AI V5 (Webhook Mode)**! ⚽\n\n🔍 **Stable HTTP API Only**\n\nTry: `/live`, `/today`, `/analysis man city`, or `/expert_bet real madrid`."
         else:
             return self.handle_team_specific_query(message_lower)
 
@@ -673,10 +626,6 @@ class EnhancedFootballAI:
 {match_analyzer.get_live_insights(match_data)}
 """
         
-    # --- [ All Prediction Helper methods remain identical: _get_match_progress, 
-    #       _calculate_1x2_probability, _calculate_over_under_probability, 
-    #       _predict_correct_score, _predict_goal_minutes, generate_combined_prediction ] ---
-    
     def _get_match_progress(self, minute):
         if minute == "HT": return 50.0
         if minute.isdigit(): return min(90.0, float(minute))
@@ -877,7 +826,7 @@ class EnhancedFootballAI:
         else:
             return "Please specify two teams for prediction. Example: '/predict Manchester City vs Liverpool'"
 
-    def handle_api_status(self):
+    def get_api_status_text(self):
         status = api_manager.get_api_status()
         
         return f"""
@@ -890,6 +839,9 @@ class EnhancedFootballAI:
 
 💡 **Only HTTP API is currently active for stability.**
 """
+
+    def handle_api_status(self):
+        return self.get_api_status_text()
     
     def analyze_and_select_expert_bet(self, match_data, home_team, away_team):
         home_prev_data = get_mock_previous_data(home_team)
@@ -1027,19 +979,18 @@ class EnhancedFootballAI:
         
         return "❓ میں آپ کی بات سمجھ نہیں پایا۔ براہ کرم کمانڈ استعمال کریں: `/live`, `/today`, `/analysis Man City`, یا `/expert_bet Real Madrid`."
 
-
-# Initialize Enhanced AI
 football_ai = EnhancedFootballAI()
 
 # -------------------------
-# TELEGRAM BOT HANDLERS (Identical to V3)
+# TELEGRAM HANDLERS (Same as V4, but without @bot.message_handler)
 # -------------------------
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
+    # Same as V4
     welcome_text = """
-🤖 **SUPER STABLE FOOTBALL ANALYSIS BOT (V4)** ⚽
+🤖 **SUPER STABLE FOOTBALL ANALYSIS BOT (V5 Webhook)** ⚽
 
-🚀 **STABLE HTTP API MODE ACTIVE!** (Optimized for reliability)
+🚀 **WEBHOOK MODE ACTIVE!** (Optimized for Railway/Free Tiers)
 
 🔍 **CORE COMMANDS:**
 • `/live`: Real-time scores & updates ⏱️
@@ -1147,6 +1098,20 @@ def handle_all_messages(message):
         bot.reply_to(message, "❌ Sorry, error occurred. Please try again!")
 
 # -------------------------
+# NEW: WEBHOOK SETUP (Flask)
+# -------------------------
+@app.route('/' + BOT_TOKEN, methods=['POST'])
+def webhook():
+    """Handles Telegram updates sent via Webhook"""
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '!', 200 # Telegram expects a quick 200 response
+    return 'Hello, I am V5 Webhook Bot!', 200
+
+
+# -------------------------
 # AUTO LIVE ALERT SYSTEM (7 Minute Interval)
 # -------------------------
 def auto_live_alert_system():
@@ -1158,14 +1123,10 @@ def auto_live_alert_system():
     while True:
         try:
             raw_matches, source = fetch_live_matches_http()
-            # Only analyze matches that are actually live (minute is digit and < 90)
             live_matches = [m for m in raw_matches if m.get('match_live') == '1' and m.get('match_status').isdigit() and int(m.get('match_status')) < 90]
             
-            if not live_matches:
-                logging.info(f"Auto Alert: No live matches to analyze.")
-            else:
+            if live_matches:
                 logging.info(f"Auto Alert: Analyzing {len(live_matches)} live matches...")
-                
                 for match in live_matches:
                     home_team = match.get("match_hometeam_name", "Home")
                     away_team = match.get("match_awayteam_name", "Away")
@@ -1219,61 +1180,54 @@ def auto_updater():
             time.sleep(300)
 
 # -------------------------
-# STARTUP FUNCTION (Improved Polling Stability)
+# STARTUP FUNCTION (Webhook Setup)
 # -------------------------
-def run_polling():
-    """Function to run the bot's polling loop with robust error handling."""
+def set_webhook():
+    """Set the Telegram webhook URL"""
+    webhook_path = f'/{BOT_TOKEN}'
+    full_webhook_url = WEBHOOK_URL.rstrip('/') + webhook_path
     
-    # We will use the built-in logic for pyTelegramBotAPI polling, but wrapped in a restart loop
-    while True:
-        try:
-            # Setting webhook to None ensures polling is used
-            bot.remove_webhook() 
-            logging.info("Starting bot polling...")
-            
-            # The error from your log "self.token, offset=offset..." usually happens within infinity_polling 
-            # due to network issues or bad API state. We catch it here.
-            bot.infinity_polling(timeout=10, long_polling_timeout=10, interval=1)
-            
-        except requests.exceptions.ReadTimeout:
-            logging.error("Telegram Polling Error: ReadTimeout. Reconnecting...")
-            time.sleep(5)
-            continue
-        except telebot.apihelper.ApiException as e:
-            # Catches common API errors like 409 Conflict (if two bots are running)
-            logging.error(f"Telegram Polling Error: API Exception: {e}. Reconnecting...")
-            time.sleep(10)
-            continue
-        except Exception as e:
-            logging.error(f"Telegram Polling Error: Unexpected Error: {e}. Reconnecting in 15s...")
-            time.sleep(15)
-            continue
+    # 1. Delete previous webhook if any
+    bot.remove_webhook()
+    
+    # 2. Set the new webhook
+    success = bot.set_webhook(url=full_webhook_url)
+    
+    if success:
+        logging.info(f"✅ Webhook successfully set to: {full_webhook_url}")
+    else:
+        logging.error("❌ Failed to set webhook. Check your WEBHOOK_URL/BOT_TOKEN.")
+        
+    return success
 
 def start_bot():
-    """Initializes and starts all threads."""
-    logging.info("🚀 Starting SUPER STABLE Football Analysis Bot V4...")
+    """Initializes and starts all threads and Flask server."""
+    logging.info("🚀 Starting SUPER STABLE Football Analysis Bot V5 (WEBHOOK MODE)...")
     
-    # Start auto-updater (for HTTP data)
+    # Start background threads (These are independent of Flask/Webhook)
     updater_thread = threading.Thread(target=auto_updater, daemon=True)
     updater_thread.start()
-    logging.info("✅ HTTP Auto-Updater started!")
+    logging.info("✅ HTTP Auto-Updater (2 min) started!")
     
-    # Start auto live alert system
     alert_thread = threading.Thread(target=auto_live_alert_system, daemon=True)
     alert_thread.start()
     logging.info("✅ Auto Live Alert System (7 min check) started!")
     
     time.sleep(5) 
-    
+
+    # Set the webhook URL before starting the Flask server
+    if not set_webhook():
+        logging.error("Startup Failed: Webhook setting failed.")
+        return
+
     # Send startup message
     api_status = api_manager.get_api_status()
-    
     if OWNER_CHAT_ID:
         startup_msg = f"""
-🤖 **SUPER STABLE BOT STARTED! (V4)**
+🤖 **SUPER STABLE BOT STARTED! (V5)**
 
-**✅ STABLE HTTP MODE ACTIVE!**
-• Telegram Polling: **Robust Error Handling Added.**
+**✅ WEBHOOK MODE ACTIVE!** (Polling Disabled)
+• Telegram Webhook: **{WEBHOOK_URL}**
 • **`/expert_bet`** is active!
 
 🌐 **Current Status:**
@@ -1284,8 +1238,10 @@ def start_bot():
 """
         bot.send_message(OWNER_CHAT_ID, startup_msg, parse_mode='Markdown')
 
-    # Start the robust polling loop
-    run_polling()
+    # Start Flask Web Server
+    logging.info(f"Starting Flask server on port {PORT}...")
+    # NOTE: '0.0.0.0' is required for container deployments like Railway/Heroku
+    app.run(host='0.0.0.0', port=PORT)
 
 if __name__ == '__main__':
     start_bot()

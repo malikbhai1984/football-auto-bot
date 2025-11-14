@@ -18,5 +18,12 @@ python-dotenv
 
 
 
+
+gunicorn
+
+pytz
+
 websocket-client
+
+
 

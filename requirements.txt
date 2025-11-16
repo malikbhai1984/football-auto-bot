@@ -3,26 +3,21 @@
 pyTelegramBotAPI==4.21.0
 requests==2.31.0
 Flask==3.0.3
-hypercorn==0.16.0
+
 python-dotenv==1.0.1
 
-
-
-
-requests
-Flask
-
-
-python-dotenv
+gunicorn 
 
 
 
 
-gunicorn
 
-pytz
 
-websocket-client
+
+
+
+
+
 
 
 

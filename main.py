@@ -5,7 +5,7 @@ import time
 import random
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request
 import threading
 from dotenv import load_dotenv
@@ -41,7 +41,7 @@ app = Flask(__name__)
 
 # --- CONFIGURATION ---
 API_FOOTBALL_URL = "https://apiv3.apifootball.com"
-MAX_DAILY_HITS = 100 # Adjusted for typical free tier limit (API-Football's free tier is 100/day)
+MAX_DAILY_HITS = 100 # Adjusted for typical free tier limit
 SLEEP_TIME_SECONDS = 420 # 7 minutes interval for API calls
 CONFIDENCE_THRESHOLD = 85.0 # Minimum confidence for expert bet alert
 
@@ -51,7 +51,26 @@ match_cache = {}
 last_fetch_time = "N/A"
 
 # =======================================================
-# 2. Enhanced Prediction Core (V2 Logic Integrated)
+# 2. Match Analysis Dummy Class (FIXED LOCATION)
+# =======================================================
+class MatchAnalysis:
+    """A placeholder class required for the EnhancedFootballAI to initialize without error."""
+    def generate_simple_score_based_prediction(self, match_data):
+        """Generates simple prediction based on current score and time"""
+        minute = match_data.get("match_status", "0")
+        if minute == "FT": return "🏁 Match is over."
+        # This function is used by the prediction logic for insights
+        home_score = int(match_data.get("match_hometeam_score", 0))
+        away_score = int(match_data.get("match_awayteam_score", 0))
+        if home_score > away_score:
+            return "✅ Home team has the lead."
+        elif away_score > home_score:
+            return "✅ Away team has the lead."
+        else:
+            return "🤝 Draw is highly likely."
+
+# =======================================================
+# 3. Enhanced Prediction Core (V2 Logic Integrated)
 # =======================================================
 
 class EnhancedFootballAI:
@@ -63,7 +82,8 @@ class EnhancedFootballAI:
             "real madrid": {"strength": 94, "style": "experienced", "goal_avg": 2.3},
             "unknown": {"strength": 75, "style": "standard", "goal_avg": 1.5}
         }
-        self.match_analyzer = MatchAnalysis() # V2's detailed analysis class
+        # FIX: MatchAnalysis is now defined above, so this initialization works
+        self.match_analyzer = MatchAnalysis() 
 
     def get_team_strength_and_avg(self, team_name):
         """Retrieve team strength and goal average"""
@@ -93,7 +113,7 @@ class EnhancedFootballAI:
         elif minute.isdigit(): progress = min(90, int(minute))
         progress_percent = progress / 90
         
-        # 1. Match Winner Prediction (1X2)
+        # --- Prediction Logic (1X2 & O/U) ---
         total_strength = strength1 + strength2
         prob1_base = (strength1 / total_strength) * 100
         prob2_base = (strength2 / total_strength) * 100
@@ -106,24 +126,21 @@ class EnhancedFootballAI:
         
         score_diff = home_score - away_score
         
-        if abs(score_diff) > 0 and progress_percent > 0.4:
-            lead_factor = 1.0 + (abs(score_diff) * progress_percent * 0.5)
-            
-            if score_diff > 0:
-                prob1 *= lead_factor
-                prob2 /= lead_factor
-            else:
-                prob2 *= lead_factor
-                prob1 /= lead_factor
-            
-            new_total = prob1 + prob2
-            draw_adjustment = max(0, draw_prob_base / (1 + progress_percent * abs(score_diff)))
-            prob1 = (prob1 / new_total) * (100 - draw_adjustment)
-            prob2 = (prob2 / new_total) * (100 - draw_adjustment)
-            draw_prob = 100 - prob1 - prob2
-        else:
-            draw_prob = draw_prob_base
+        # Live Adjustment (Simple): If a team is leading 1-0 late (progress_percent > 0.7), their win probability increases
+        if abs(score_diff) == 1 and progress_percent > 0.7:
+             if score_diff > 0: prob1 += 10; prob2 -= 5 
+             else: prob2 += 10; prob1 -= 5
         
+        draw_prob = max(0, 100 - prob1 - prob2)
+        prob1 = max(0, prob1)
+        prob2 = max(0, prob2)
+        
+        # Normalize to 100%
+        final_total = prob1 + prob2 + draw_prob
+        prob1 = (prob1 / final_total) * 100
+        prob2 = (prob2 / final_total) * 100
+        draw_prob = (draw_prob / final_total) * 100
+
         # Final Winner Determination
         max_prob_1x2 = max(prob1, prob2, draw_prob)
         if max_prob_1x2 == prob1: 
@@ -136,31 +153,18 @@ class EnhancedFootballAI:
             winner = "DRAW"
             market_1x2 = "DRAW"
             
-        # 2. Over/Under Goals Prediction (Simplified)
-        expected_goals = (avg1 + avg2) 
-        over_25_prob = 60 if expected_goals > 2.5 else 40
-        over_25_prob = min(99, max(1, over_25_prob))
+        # Over/Under Goals Prediction (Simplified)
+        over_25_prob = 60 if (avg1 + avg2) > 2.5 else 40
         under_25_prob = 100 - over_25_prob
         
-        max_prob_OU = max(over_25_prob, under_25_prob)
-        market_OU = f"Over 2.5 Goals" if max_prob_OU == over_25_prob else f"Under 2.5 Goals"
-        
-        # --- Alert Generation Check ---
+        # Alert Generation Check
         alert_to_send = None
-        
         if send_alert:
             if max_prob_1x2 >= CONFIDENCE_THRESHOLD:
-                alert_to_send = {
-                    "market": "Match Winner (1X2)",
-                    "prediction": market_1x2,
-                    "confidence": max_prob_1x2
-                }
-            elif max_prob_OU >= CONFIDENCE_THRESHOLD:
-                alert_to_send = {
-                    "market": market_OU,
-                    "prediction": market_OU,
-                    "confidence": max_prob_OU
-                }
+                alert_to_send = {"market": "Match Winner (1X2)", "prediction": market_1x2, "confidence": max_prob_1x2}
+            elif max(over_25_prob, under_25_prob) >= CONFIDENCE_THRESHOLD:
+                market_ou = "Over 2.5 Goals" if over_25_prob > under_25_prob else "Under 2.5 Goals"
+                alert_to_send = {"market": market_ou, "prediction": market_ou, "confidence": max(over_25_prob, under_25_prob)}
 
         # Format the result for the user response
         result = f"""
@@ -171,7 +175,10 @@ class EnhancedFootballAI:
 
 🏆 **Current Verdict ({minute}' / {home_score}-{away_score}):**
 • **Match Winner:** **{winner.upper()}** ({max_prob_1x2:.1f}%)
-• **Goals:** **{market_OU.upper()}** ({max_prob_OU:.1f}%)
+• **Goals:** **{'Over 2.5 Goals' if over_25_prob > under_25_prob else 'Under 2.5 Goals'}** ({max(over_25_prob, under_25_prob):.1f}%)
+
+💡 **Insight:**
+{self.match_analyzer.generate_simple_score_based_prediction(match_data)}
 """
         return result, alert_to_send
 
@@ -189,7 +196,11 @@ class EnhancedFootballAI:
             return self.get_hit_stats_text()
         
         elif any(word in message_lower for word in ['analysis', 'analyze', 'detail', 'report']):
-            return self.handle_detailed_analysis(message_lower)
+            # For text queries, check if teams are provided
+            teams = [key for key in self.team_data if key in message_lower]
+            if teams:
+                 return self.handle_detailed_analysis("analysis " + " ".join(teams))
+            return self.handle_detailed_analysis("analysis") # No team specified
 
         elif any(word in message_lower for word in ['hello', 'hi', 'hey', 'start']):
             return "👋 Hello! I'm **ENHANCED Football Analysis AI**! ⚽\n\n🔍 **Detailed Match Analysis**\n🔄 **Webhook Mode Active**\n\nTry: 'live matches', 'analysis man city', '/today', or '/stats'"
@@ -215,8 +226,9 @@ class EnhancedFootballAI:
         for league, league_matches in leagues.items():
             response += f"**{league}**\n"
             for match in league_matches:
-                icon = "⏱️" if match.get('match_status').isdigit() else "🔄"
-                response += f"🔵 {match['match_hometeam_name']} {match['match_hometeam_score']}-{match['match_awayteam_score']} {match['match_awayteam_name']} {icon} {match['match_status']}'\n"
+                status = match.get('match_status')
+                icon = "⏱️" if status.isdigit() else "🔄" if status == 'HT' else "🏁"
+                response += f"🔵 {match['match_hometeam_name']} {match['match_hometeam_score']}-{match['match_awayteam_score']} {match['match_awayteam_name']} {icon} {status}'\n"
             response += "\n"
         
         response += self.get_hit_stats_text()
@@ -229,16 +241,17 @@ class EnhancedFootballAI:
         if not matches:
             return "📅 **Today's Schedule**\n\n❌ No matches scheduled for today."
         
-        live_matches = [m for m in matches if m.get('match_live') == '1']
-        upcoming_matches = [m for m in matches if m.get('match_live') != '1']
+        live_matches = [m for m in matches if m.get('match_live') == '1' or m.get('match_status') in ['HT', 'FT', 'AET', 'PEN']]
+        upcoming_matches = [m for m in matches if m.get('match_live') != '1' and m.get('match_status') not in ['HT', 'FT', 'AET', 'PEN']]
         
-        response = f"📅 **TODAY'S FOOTBALL SCHEDULE** ⚽\n\n"
+        response = f"📅 **TODAY'S FOOTBALL SCHEDULE ({datetime.now().strftime('%Y-%m-%d')})** ⚽\n\n"
         
         if live_matches:
             response += "--- **🔴 LIVE / FT MATCHES** ---\n"
             for match in live_matches[:5]:
-                icon = "⏱️" if match.get('match_status').isdigit() else "🏁"
-                response += f"{match['league_name']}\n🔵 {match['match_hometeam_name']} {match['match_hometeam_score']}-{match['match_awayteam_score']} {match['match_awayteam_name']} {icon} {match['match_status']}'\n"
+                status = match.get('match_status')
+                icon = "⏱️" if status.isdigit() else "🔄" if status == 'HT' else "🏁"
+                response += f"{match['league_name']}\n🔵 {match['match_hometeam_name']} {match['match_hometeam_score']}-{match['match_awayteam_score']} {match['match_awayteam_name']} {icon} {status}'\n"
             response += "\n"
             
         if upcoming_matches:
@@ -249,16 +262,13 @@ class EnhancedFootballAI:
             
         return response
         
-    def handle_detailed_analysis(self, message):
+    def handle_detailed_analysis(self, query):
         """Handle detailed match analysis requests (Integrated V2 logic)"""
         
-        teams_found = []
-        for team_key in self.team_data:
-            if team_key in message.lower():
-                teams_found.append(team_key)
+        teams_found = [key for key in self.team_data if key in query.lower()]
         
         match_data = None
-        if len(teams_found) >= 1:
+        if teams_found:
             # Simple find by team name in live cache
             for match in match_cache.values():
                 home = match.get('match_hometeam_name', '').lower()
@@ -268,10 +278,12 @@ class EnhancedFootballAI:
                     match_data = match
                     break
 
-        if match_data:
+        if match_data and (match_data.get('match_live') == '1' or match_data.get('match_status') == 'HT'):
             return self.generate_live_match_report(match_data)
         else:
-            return "❌ Live match not found for this team. Use `/live` to see current matches."
+            if teams_found:
+                return f"❌ {teams_found[0].title()} is not currently playing live. Use `/live` to see current matches."
+            return "❌ Live match not found for analysis. Use `/live` to see current matches."
 
     def generate_live_match_report(self, match_data):
         """Generates detailed report using Prediction logic and basic info"""
@@ -321,23 +333,15 @@ class EnhancedFootballAI:
 # Initialize Enhanced AI
 football_ai = EnhancedFootballAI()
 
-# DUMMY MatchAnalysis Class (Needed for compatibility with Prediction Core logic)
-class MatchAnalysis:
-    def generate_simple_score_based_prediction(self, match_data):
-        """Generates simple prediction based on current score and time"""
-        minute = match_data.get("match_status", "0")
-        if minute == "FT": return "🏁 Match is over."
-        return "Insight generated based on V2 logic."
-
 # =======================================================
-# 3. HTTP API Manager (Simplified for V9)
+# 4. HTTP API Manager
 # =======================================================
 
 def get_league_name(league_id):
     """Get league name from ID (Simplified)"""
-    # Simple mapping for display purposes
     if league_id == "152": return "🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League"
     if league_id == "302": return "🇪🇸 La Liga"
+    if league_id == "207": return "🇮🇹 Serie A"
     return f"League {league_id}"
 
 def fetch_api_football_matches(match_live_only=True):
@@ -345,18 +349,16 @@ def fetch_api_football_matches(match_live_only=True):
     global hit_counter, last_fetch_time, match_cache
     
     # Check limit
-    if hit_counter['daily_hits'] >= MAX_DAILY_HITS:
+    if hit_counter['daily_hits'] >= MAX_DAILY_HITS and hit_counter['last_reset'] == datetime.now().date():
         logger.warning("🛑 API Limit Reached for today. Serving from cache.")
         return list(match_cache.values())
         
-    hit_counter['daily_hits'] += 1
-    
     try:
+        # Record hit only if successful, but check limit first.
+        
         if match_live_only:
-            # LIVE MATCHES
             url = f"{API_FOOTBALL_URL}/?action=get_events&match_live=1&APIkey={API_KEY}"
         else:
-            # TODAY'S MATCHES
             today_date = datetime.now().strftime('%Y-%m-%d')
             url = f"{API_FOOTBALL_URL}/?action=get_events&from={today_date}&to={today_date}&APIkey={API_KEY}"
             
@@ -366,6 +368,8 @@ def fetch_api_football_matches(match_live_only=True):
         data = response.json()
         
         if isinstance(data, list):
+            # Only count hit if API call was successful
+            hit_counter['daily_hits'] += 1
             logger.info(f"✅ API-Football: Found {len(data)} matches. Hit: {hit_counter['daily_hits']}")
             last_fetch_time = datetime.now().strftime('%H:%M:%S UTC')
             
@@ -387,7 +391,7 @@ def fetch_api_football_matches(match_live_only=True):
         return list(match_cache.values())
 
 # =======================================================
-# 4. Telegram Handlers and Auto-Updater
+# 5. Telegram Handlers and Auto-Updater
 # =======================================================
 
 @bot.message_handler(commands=['start', 'help'])
@@ -431,7 +435,7 @@ def send_detailed_analysis(message):
     try:
         bot.send_chat_action(message.chat.id, 'typing')
         command_text = message.text.split(' ', 1)
-        query = command_text[1] if len(command_text) > 1 else "analysis" 
+        query = command_text[1] if len(command_text) > 1 else ""
         
         response = football_ai.handle_detailed_analysis(query)
             
@@ -481,10 +485,12 @@ def auto_updater_thread():
 🔥 **85%+ CONFIDENCE LIVE ALERT!** 🔥
 📢 **MATCH:** {home_team} vs {away_team}
 🏆 **LEAGUE:** {match.get('league_name', 'Unknown')}
-⏱️ **MINUTE:** {minute}'
+⏱️ **MINUTE:** {minute}' | **SCORE:** {match.get('match_hometeam_score', '0')}-{match.get('match_awayteam_score', '0')}
 
 🎯 **PREDICTION:** **{alert_result['prediction'].upper()}**
 📊 **CONFIDENCE:** {alert_result['confidence']:.1f}%
+
+⚠️ *Betting is risky. Use your own discretion.*
 """
                             logger.info(f"✅ ALERT SENT: {alert_result['prediction']} @ {alert_result['confidence']:.1f}%")
                             bot.send_message(OWNER_CHAT_ID, alert_message, parse_mode='Markdown')
@@ -496,7 +502,7 @@ def auto_updater_thread():
         time.sleep(SLEEP_TIME_SECONDS) # Sleeps for 7 minutes
 
 # =======================================================
-# 5. Flask Webhook Setup
+# 6. Flask Webhook Setup
 # =======================================================
 
 @app.before_request
@@ -532,7 +538,7 @@ def webhook():
         return 'Invalid request type', 403
 
 # =======================================================
-# 6. Startup
+# 7. Startup
 # =======================================================
 if __name__ == '__main__':
     # Start the background thread for API calls and Alerts
@@ -541,4 +547,3 @@ if __name__ == '__main__':
     # Start the Flask app using Gunicorn (implied by Railway/Procfile)
     logger.info("INFO:main:Starting Flask/Gunicorn server...")
     app.run(host='0.0.0.0', port=PORT)
-

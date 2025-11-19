@@ -10,7 +10,7 @@ import threading
 # Direct credentials (string)
 # -------------------------
 BOT_TOKEN = "8336882129:AAFZ4oVAY_cEyy_JTi5A0fo12TnTXSEI8as"
-OWNER_CHAT_ID = "7742985526"
+OWNER_CHAT_ID = 7742985526
 API_KEY = "839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
 DOMAIN = "https://yourapp.up.railway.app"  # Replace with your Railway app domain
 PORT = 8080

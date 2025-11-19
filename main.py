@@ -1,25 +1,20 @@
 import os
 import requests
 import telebot
-import time
-import random
+from flask import Flask, request
 from datetime import datetime
-import threading
-from dotenv import load_dotenv
 
 # -------------------------
-# Load environment variables
+# Config
 # -------------------------
-load_dotenv()
-
 BOT_TOKEN = "8336882129:AAFZ4oVAY_cEyy_JTi5A0fo12TnTXSEI8as"
 OWNER_CHAT_ID = 7742985526
 API_KEY = "839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325"
-
-if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY]):
-    raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, or API_KEY missing!")
+DOMAIN = "https://football-auto-bot-production.up.railway.app"
+PORT = int(os.environ.get("PORT", 8080))
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 API_URL = "https://apiv3.apifootball.com"
 
 # -------------------------
@@ -27,8 +22,7 @@ API_URL = "https://apiv3.apifootball.com"
 # -------------------------
 def fetch_live_matches():
     try:
-        today = datetime.now().strftime('%Y-%m-%d')
-        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={today}&to={today}"
+        url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={datetime.now().strftime('%Y-%m-%d')}&to={datetime.now().strftime('%Y-%m-%d')}"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
@@ -45,11 +39,12 @@ def fetch_live_matches():
 # Prediction engine
 # -------------------------
 def calculate_probabilities(match):
+    import random
     base = 85
-    h2h_bonus = random.randint(0,5)
-    form_bonus = random.randint(0,5)
-    live_bonus = random.randint(0,5)
-    odds_bonus = random.randint(-3,3)
+    h2h_bonus = random.randint(0, 5)
+    form_bonus = random.randint(0, 5)
+    live_bonus = random.randint(0, 5)
+    odds_bonus = random.randint(-3, 3)
 
     home_win = min(95, base + h2h_bonus + form_bonus + live_bonus + odds_bonus)
     away_win = max(5, 100 - home_win - 5)
@@ -64,10 +59,10 @@ def calculate_probabilities(match):
     }
 
     btts = "Yes" if random.randint(0,100) > 30 else "No"
-    last_10_min = random.randint(60,90)
+    last_10_min = random.randint(60, 90)
     cs1 = f"{home_win//10}-{away_win//10}"
     cs2 = f"{home_win//10+1}-{away_win//10}"
-    goal_minutes = sorted(random.sample(range(5,95),5))
+    goal_minutes = sorted(random.sample(range(5, 95), 5))
 
     return {
         "home_win": home_win,
@@ -103,27 +98,6 @@ def generate_prediction(match):
     return msg
 
 # -------------------------
-# Auto-update thread
-# -------------------------
-def auto_update():
-    while True:
-        try:
-            matches = fetch_live_matches()
-            if matches:
-                for match in matches:
-                    msg = generate_prediction(match)
-                    try:
-                        bot.send_message(OWNER_CHAT_ID, msg)
-                        time.sleep(2)
-                    except Exception as e:
-                        print(f"❌ Send message error: {e}")
-            else:
-                print("⏳ No live matches currently.")
-        except Exception as e:
-            print(f"❌ Auto-update error: {e}")
-        time.sleep(300)  # every 5 minutes
-
-# -------------------------
 # Telegram commands
 # -------------------------
 @bot.message_handler(commands=['start', 'help'])
@@ -140,17 +114,34 @@ def send_predictions(message):
         bot.reply_to(message, "⏳ No live matches currently.")
 
 # -------------------------
-# Setup bot + start auto-update
+# Flask webhook routes
 # -------------------------
-def setup_bot():
-    t = threading.Thread(target=auto_update, daemon=True)
-    t.start()
-    print("✅ Auto-update started!")
-    bot.send_message(OWNER_CHAT_ID, "🤖 Football Bot Started! Monitoring live matches every 5 minutes.")
-    bot.polling(none_stop=True)
+@app.route('/')
+def home():
+    return "Football Bot Running!"
+
+@app.route(f'/{BOT_TOKEN}', methods=['POST'])
+def webhook():
+    try:
+        update = telebot.types.Update.de_json(request.get_json())
+        bot.process_new_updates([update])
+        return 'OK', 200
+    except Exception as e:
+        print(f"❌ Webhook error: {e}")
+        return 'ERROR', 400
 
 # -------------------------
-# Run
+# Setup webhook
+# -------------------------
+def setup_bot():
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{DOMAIN}/{BOT_TOKEN}")
+    print(f"✅ Webhook set: {DOMAIN}/{BOT_TOKEN}")
+    bot.send_message(OWNER_CHAT_ID, "🤖 Football Bot Started! Monitoring live matches every 5 minutes.")
+
+# -------------------------
+# Run Flask app
 # -------------------------
 if __name__ == "__main__":
     setup_bot()
+    app.run(host='0.0.0.0', port=PORT)

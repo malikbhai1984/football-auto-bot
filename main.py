@@ -24,11 +24,11 @@ Load environment variables
 
 load_dotenv()
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("8336882129:AAFZ4oVAY_cEyy_JTi5A0fo12TnTXSEI8as")
 
-OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
+OWNER_CHAT_ID = os.environ.get("7742985526")
 
-API_KEY = os.environ.get("API_KEY")
+API_KEY = os.environ.get("839f1988ceeaafddf8480de33d821556e29d8204b4ebdca13cb69c7a9bdcd325")
 
 PORT = int(os.environ.get("PORT", 8080))
 

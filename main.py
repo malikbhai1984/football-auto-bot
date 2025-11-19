@@ -22,8 +22,6 @@ DOMAIN = os.environ.get("DOMAIN")  # e.g., https://yourapp.up.railway.app
 if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY, DOMAIN]):
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, API_KEY, or DOMAIN missing!")
 
-OWNER_CHAT_ID = int(OWNER_CHAT_ID)  # Ensure integer for TeleBot
-
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 API_URL = "https://apiv3.apifootball.com"
@@ -61,13 +59,12 @@ def calculate_probabilities(match):
     away_win = max(5, 100 - home_win - 5)
     draw = max(5, 100 - home_win - away_win)
 
-    ou = {
-        0.5: min(95, home_win + random.randint(-5, 5)),
-        1.5: min(95, home_win - 2 + random.randint(-5, 5)),
-        2.5: min(95, home_win - 5 + random.randint(-5, 5)),
-        3.5: min(90, home_win - 10 + random.randint(-5, 5)),
-        4.5: min(85, home_win - 15 + random.randint(-5, 5)),
-    }
+    ou = {}
+    ou[0.5] = min(95, home_win + random.randint(-5, 5))
+    ou[1.5] = min(95, home_win - 2 + random.randint(-5, 5))
+    ou[2.5] = min(95, home_win - 5 + random.randint(-5, 5))
+    ou[3.5] = min(90, home_win - 10 + random.randint(-5, 5))
+    ou[4.5] = min(85, home_win - 15 + random.randint(-5, 5))
 
     btts = "Yes" if random.randint(0, 100) > 30 else "No"
     last_10_min = random.randint(60, 90)
@@ -184,6 +181,6 @@ def setup_bot():
 # -------------------------
 # Run
 # -------------------------
-if __name__ == '__main__':
+if __name__ == "__main__":
     setup_bot()
     app.run(host='0.0.0.0', port=PORT)

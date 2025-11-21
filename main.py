@@ -12,46 +12,60 @@ from threading import Thread, Lock
 import json
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 import io
 import re
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
-SPORTMONKS_API = os.getenv("API_KEY")
-FOOTBALL_DATA_API = os.getenv("FOOTBALL_DATA_API")  # Second API key
-BACKUP_API = os.getenv("BACKUP_API")  # Third backup API
+# Environment variables with fallbacks
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
+SPORTMONKS_API = os.getenv("API_KEY", "").strip()
+FOOTBALL_DATA_API = os.getenv("FOOTBALL_DATA_API", "").strip()
+BACKUP_API = os.getenv("BACKUP_API", "").strip()
 
 logger.info("🚀 Initializing PRO API-Safe Multi-Source Bot...")
 
-# Validate environment variables
+# Validate critical environment variables
 if not BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN not found")
-if not OWNER_CHAT_ID:
-    logger.error("❌ OWNER_CHAT_ID not found") 
+    logger.error("❌ BOT_TOKEN not found in environment variables")
+    # Don't exit, just log - might be running in test mode
 
-# Multiple API support
-API_KEYS = {
-    'sportmonks': SPORTMONKS_API,
-    'football_data': FOOTBALL_DATA_API,
-    'backup': BACKUP_API
-}
+if not OWNER_CHAT_ID:
+    logger.error("❌ OWNER_CHAT_ID not found in environment variables")
+
+# Check if we have at least one API key
+API_KEYS_AVAILABLE = any([SPORTMONKS_API, FOOTBALL_DATA_API, BACKUP_API])
+if not API_KEYS_AVAILABLE:
+    logger.warning("⚠️ No API keys found - running in limited mode")
 
 try:
-    OWNER_CHAT_ID = int(OWNER_CHAT_ID)
-    logger.info(f"✅ OWNER_CHAT_ID: {OWNER_CHAT_ID}")
+    OWNER_CHAT_ID = int(OWNER_CHAT_ID) if OWNER_CHAT_ID else 0
+    if OWNER_CHAT_ID:
+        logger.info(f"✅ OWNER_CHAT_ID: {OWNER_CHAT_ID}")
+    else:
+        logger.warning("⚠️ OWNER_CHAT_ID is 0 or invalid")
 except (ValueError, TypeError) as e:
     logger.error(f"❌ Invalid OWNER_CHAT_ID: {e}")
+    OWNER_CHAT_ID = 0
 
-bot = telebot.TeleBot(BOT_TOKEN)
+# Initialize bot only if token is available
+if BOT_TOKEN:
+    bot = telebot.TeleBot(BOT_TOKEN)
+else:
+    logger.error("❌ BOT_TOKEN missing - Telegram features disabled")
+    bot = None
+
 app = Flask(__name__)
 
 # Pakistan Time Zone
@@ -69,25 +83,11 @@ TOP_LEAGUES = {
     203: "UEFA Champions League"
 }
 
-# League mappings for different APIs
-LEAGUE_MAPPINGS = {
-    'sportmonks': {
-        39: "Premier League", 140: "La Liga", 78: "Bundesliga", 
-        135: "Serie A", 61: "Ligue 1", 94: "Primeira Liga", 
-        88: "Eredivisie", 203: "UEFA Champions League"
-    },
-    'football_data': {
-        'PL': "Premier League", 'PD': "La Liga", 'BL1': "Bundesliga",
-        'SA': "Serie A", 'FL1': "Ligue 1", 'PPL': "Primeira Liga",
-        'DED': "Eredivisie", 'CL': "UEFA Champions League"
-    }
-}
-
 # Configuration Constants
 class Config:
     SPORTMONKS_LIMIT_PER_MINUTE = 8
     FOOTBALL_DATA_LIMIT_PER_MINUTE = 10
-    BOT_CYCLE_INTERVAL = 300  # 5 minutes (reduced from 10)
+    BOT_CYCLE_INTERVAL = 300  # 5 minutes
     DATA_CLEANUP_INTERVAL = 12  # cycles
     HISTORICAL_DATA_RELOAD = 12  # cycles
     MIN_CONFIDENCE_THRESHOLD = 65  # Minimum confidence for sending predictions
@@ -151,17 +151,14 @@ def check_api_limits(api_name):
         
         # Realistic limits based on API documentation
         if api_name == 'sportmonks':
-            # Sportmonks: 10 requests/minute, 500/day
             if api_data['count'] >= 8:  # Safe buffer
                 return False
                 
         elif api_name == 'football_data':
-            # Football-Data.org: 10 requests/minute
             if api_data['count'] >= 8:  # Safe buffer
                 return False
                 
         elif api_name == 'github':
-            # GitHub: 60 requests/hour
             if api_data['count'] >= 50:
                 return False
         
@@ -199,10 +196,17 @@ def safe_api_call(url, api_name, headers=None, timeout=10):
         update_api_status(api_name, success=False)
         return None
 
-# Flask routes remain same...
 @app.route("/")
 def health():
-    return "⚽ PRO API-Safe Multi-Source Bot is Running!", 200
+    """Health check endpoint"""
+    status = {
+        "status": "healthy",
+        "timestamp": format_pakistan_time(),
+        "bot_started": bot_started,
+        "message_counter": message_counter,
+        "apis_available": API_KEYS_AVAILABLE
+    }
+    return json.dumps(status), 200, {'Content-Type': 'application/json'}
 
 @app.route("/health")
 def health_check():
@@ -227,6 +231,11 @@ def api_status():
 def send_telegram_message(message, max_retries=3):
     """Send message to Telegram with improved retry logic"""
     global message_counter
+    
+    if not bot or not OWNER_CHAT_ID:
+        logger.error("❌ Cannot send message - bot or chat ID not configured")
+        return False
+        
     for attempt in range(max_retries):
         try:
             message_counter += 1
@@ -245,7 +254,7 @@ def send_telegram_message(message, max_retries=3):
 def fetch_football_data_matches():
     """Fetch live matches from Football-Data.org API"""
     try:
-        if not API_KEYS['football_data']:
+        if not FOOTBALL_DATA_API:
             logger.warning("⚠️ Football-Data API key not configured")
             return []
             
@@ -255,7 +264,7 @@ def fetch_football_data_matches():
         logger.info("🌐 Fetching live matches from Football-Data.org...")
         
         url = "https://api.football-data.org/v4/matches"
-        headers = {'X-Auth-Token': API_KEYS['football_data']}
+        headers = {'X-Auth-Token': FOOTBALL_DATA_API}
         
         response = safe_api_call(url, 'football_data', headers=headers, timeout=15)
         
@@ -271,7 +280,6 @@ def fetch_football_data_matches():
                 minute = match.get("minute", None)
                 score = match.get("score", {})
                 
-                # Check if match is live and in last 30 minutes
                 if status == "LIVE" and minute and minute >= 60:
                     home_team = match.get("homeTeam", {}).get("name", "Unknown Home")
                     away_team = match.get("awayTeam", {}).get("name", "Unknown Away")
@@ -309,44 +317,17 @@ def fetch_football_data_matches():
         logger.error(f"❌ Football-Data API error: {e}")
         return []
 
-def fetch_current_live_matches():
-    """Fetch live matches from multiple APIs with fallback"""
-    all_matches = []
-    
-    # Try Sportmonks first
-    if API_KEYS['sportmonks'] and check_api_health('sportmonks'):
-        sportmonks_matches = fetch_sportmonks_matches()
-        if sportmonks_matches:
-            all_matches.extend(sportmonks_matches)
-            logger.info(f"✅ Sportmonks provided {len(sportmonks_matches)} matches")
-    
-    # Try Football-Data as fallback
-    if not all_matches and API_KEYS['football_data'] and check_api_health('football_data'):
-        football_data_matches = fetch_football_data_matches()
-        if football_data_matches:
-            all_matches.extend(football_data_matches)
-            logger.info(f"✅ Football-Data provided {len(football_data_matches)} matches")
-    
-    # Remove duplicates based on team names and league
-    unique_matches = []
-    seen_matches = set()
-    
-    for match in all_matches:
-        match_key = f"{match['home']}_{match['away']}_{match['league']}"
-        if match_key not in seen_matches:
-            seen_matches.add(match_key)
-            unique_matches.append(match)
-    
-    logger.info(f"📊 Total unique live matches: {len(unique_matches)}")
-    return unique_matches
-
 def fetch_sportmonks_matches():
     """Original Sportmonks fetch function"""
     try:
+        if not SPORTMONKS_API:
+            logger.warning("⚠️ Sportmonks API key not configured")
+            return []
+            
         if not check_api_limits('sportmonks'):
             return []
             
-        url = f"https://api.sportmonks.com/v3/football/livescores?api_token={API_KEYS['sportmonks']}&include=league,participants"
+        url = f"https://api.sportmonks.com/v3/football/livescores?api_token={SPORTMONKS_API}&include=league,participants"
         logger.info("🌐 Fetching live matches from Sportmonks...")
         
         response = safe_api_call(url, 'sportmonks', timeout=15)
@@ -360,7 +341,7 @@ def fetch_sportmonks_matches():
         for match in data.get("data", []):
             league_id = match.get("league_id")
             
-            if league_id in LEAGUE_MAPPINGS['sportmonks']:
+            if league_id in TOP_LEAGUES:
                 status = match.get("status", "")
                 minute = match.get("minute", "")
                 
@@ -386,7 +367,7 @@ def fetch_sportmonks_matches():
                             match_data = {
                                 "home": home_team,
                                 "away": away_team,
-                                "league": LEAGUE_MAPPINGS['sportmonks'][league_id],
+                                "league": TOP_LEAGUES[league_id],
                                 "score": f"{home_score}-{away_score}",
                                 "minute": minute,
                                 "current_minute": current_minute,
@@ -407,7 +388,37 @@ def fetch_sportmonks_matches():
         logger.error(f"❌ Sportmonks matches error: {e}")
         return []
 
-# Historical data functions remain similar but enhanced...
+def fetch_current_live_matches():
+    """Fetch live matches from multiple APIs with fallback"""
+    all_matches = []
+    
+    # Try Sportmonks first
+    if SPORTMONKS_API and check_api_health('sportmonks'):
+        sportmonks_matches = fetch_sportmonks_matches()
+        if sportmonks_matches:
+            all_matches.extend(sportmonks_matches)
+            logger.info(f"✅ Sportmonks provided {len(sportmonks_matches)} matches")
+    
+    # Try Football-Data as fallback
+    if not all_matches and FOOTBALL_DATA_API and check_api_health('football_data'):
+        football_data_matches = fetch_football_data_matches()
+        if football_data_matches:
+            all_matches.extend(football_data_matches)
+            logger.info(f"✅ Football-Data provided {len(football_data_matches)} matches")
+    
+    # Remove duplicates based on team names and league
+    unique_matches = []
+    seen_matches = set()
+    
+    for match in all_matches:
+        match_key = f"{match['home']}_{match['away']}_{match['league']}"
+        if match_key not in seen_matches:
+            seen_matches.add(match_key)
+            unique_matches.append(match)
+    
+    logger.info(f"📊 Total unique live matches: {len(unique_matches)}")
+    return unique_matches
+
 def fetch_petermclagan_data():
     """Enhanced historical data fetching"""
     try:
@@ -421,8 +432,6 @@ def fetch_petermclagan_data():
         datasets = {
             'premier_league': 'premier_league.csv',
             'la_liga': 'la_liga.csv',
-            'bundesliga': 'bundesliga.csv',
-            'serie_a': 'serie_a.csv'
         }
         
         historical_matches = []
@@ -436,9 +445,7 @@ def fetch_petermclagan_data():
                     csv_data = io.StringIO(response.text)
                     df = pd.read_csv(csv_data)
                     
-                    # Enhanced data processing
                     for _, row in df.iterrows():
-                        # Clean team names for better matching
                         home_team = clean_team_name(row.get('HomeTeam', ''))
                         away_team = clean_team_name(row.get('AwayTeam', ''))
                         
@@ -452,11 +459,6 @@ def fetch_petermclagan_data():
                             'result': row.get('FTR', ''),
                             'source': 'petermclagan',
                             'timestamp': get_pakistan_time(),
-                            # Additional features for ML
-                            'home_shots': row.get('HS', 0),
-                            'away_shots': row.get('AS', 0),
-                            'home_shots_on_target': row.get('HST', 0),
-                            'away_shots_on_target': row.get('AST', 0)
                         }
                         historical_matches.append(match_data)
                     
@@ -480,12 +482,33 @@ def clean_team_name(team_name):
     if not team_name:
         return ""
     
-    # Remove common suffixes and clean names
     clean_name = str(team_name).strip()
     clean_name = re.sub(r'FC$|CF$|AFC$|CFC$', '', clean_name).strip()
     clean_name = re.sub(r'\s+', ' ', clean_name)
     
     return clean_name
+
+def load_historical_data():
+    """Load historical data from multiple sources"""
+    global historical_data
+    try:
+        logger.info("📥 Loading historical data from multiple sources...")
+        
+        petermclagan_data = fetch_petermclagan_data()
+        
+        # Store in global variable with timestamp
+        historical_data = {
+            'matches': petermclagan_data,
+            'last_updated': get_pakistan_time(),
+            'total_matches': len(petermclagan_data),
+        }
+        
+        logger.info(f"✅ Historical data loaded: {len(petermclagan_data)} total matches")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Historical data loading error: {e}")
+        return False
 
 def train_enhanced_ml_model():
     """Enhanced ML model with more features"""
@@ -496,7 +519,7 @@ def train_enhanced_ml_model():
             return False
         
         matches = historical_data['matches']
-        if len(matches) < 100:  # Increased minimum matches
+        if len(matches) < 50:
             return False
         
         features = []
@@ -506,16 +529,9 @@ def train_enhanced_ml_model():
             try:
                 home_goals = match.get('home_goals', 0)
                 away_goals = match.get('away_goals', 0)
-                home_shots = match.get('home_shots', 0)
-                away_shots = match.get('away_shots', 0)
-                home_shots_target = match.get('home_shots_on_target', 0)
-                away_shots_target = match.get('away_shots_on_target', 0)
                 
-                # Enhanced features
                 total_goals = home_goals + away_goals
                 goal_difference = home_goals - away_goals
-                shot_difference = home_shots - away_shots
-                shot_target_difference = home_shots_target - away_shots_target
                 
                 # Determine result
                 result = match.get('result', '')
@@ -526,11 +542,9 @@ def train_enhanced_ml_model():
                 else:
                     label = 2  # Draw
                 
-                # Feature vector with enhanced metrics
+                # Feature vector
                 feature = [
                     home_goals, away_goals, total_goals, goal_difference,
-                    home_shots, away_shots, shot_difference,
-                    home_shots_target, away_shots_target, shot_target_difference,
                     random.uniform(0.8, 1.2)  # Small randomness
                 ]
                 
@@ -540,17 +554,16 @@ def train_enhanced_ml_model():
             except Exception as e:
                 continue
         
-        if len(features) < 50:
+        if len(features) < 30:
             return False
         
         # Use better model
         features_scaled = scaler.fit_transform(features)
         
-        # Use Gradient Boosting for better accuracy
         model = GradientBoostingClassifier(
-            n_estimators=100,
+            n_estimators=50,
             learning_rate=0.1,
-            max_depth=5,
+            max_depth=3,
             random_state=42
         )
         model.fit(features_scaled, labels)
@@ -570,7 +583,7 @@ def predict_enhanced_outcome(match_data, historical_matches):
         current_score = match_data.get('home_score', 0), match_data.get('away_score', 0)
         current_minute = match_data.get('current_minute', 0)
         
-        # Get enhanced team stats
+        # Get team stats
         home_stats = get_enhanced_team_stats(home_team, historical_matches)
         away_stats = get_enhanced_team_stats(away_team, historical_matches)
         
@@ -601,8 +614,6 @@ def ml_prediction_method(match_data, home_stats, away_stats):
             home_stats['avg_goals_for'], away_stats['avg_goals_for'],
             home_stats['avg_goals_against'], away_stats['avg_goals_against'],
             home_stats['win_rate'] - away_stats['win_rate'],
-            home_stats['avg_shots'], away_stats['avg_shots'],
-            home_stats['form_strength'], away_stats['form_strength']
         ]
         
         features_scaled = scaler.transform([features])
@@ -719,13 +730,11 @@ def get_enhanced_team_stats(team_name, historical_matches):
         return {
             'win_rate': 0.35, 'draw_rate': 0.3, 'loss_rate': 0.35,
             'avg_goals_for': 1.3, 'avg_goals_against': 1.3,
-            'avg_shots': 12, 'avg_shots_on_target': 4,
             'form_strength': 0.5, 'total_matches': 0
         }
     
     wins = draws = losses = 0
     goals_for = goals_against = 0
-    total_shots = total_shots_on_target = 0
     recent_form = []
     
     for match in team_matches[-10:]:  # Last 10 matches for form
@@ -734,8 +743,6 @@ def get_enhanced_team_stats(team_name, historical_matches):
         if is_home:
             goals_for += match.get('home_goals', 0)
             goals_against += match.get('away_goals', 0)
-            total_shots += match.get('home_shots', 0)
-            total_shots_on_target += match.get('home_shots_on_target', 0)
             
             if match.get('result') == 'H':
                 wins += 1
@@ -749,8 +756,6 @@ def get_enhanced_team_stats(team_name, historical_matches):
         else:
             goals_for += match.get('away_goals', 0)
             goals_against += match.get('home_goals', 0)
-            total_shots += match.get('away_shots', 0)
-            total_shots_on_target += match.get('away_shots_on_target', 0)
             
             if match.get('result') == 'A':
                 wins += 1
@@ -771,11 +776,64 @@ def get_enhanced_team_stats(team_name, historical_matches):
         'loss_rate': losses / total_matches,
         'avg_goals_for': goals_for / total_matches,
         'avg_goals_against': goals_against / total_matches,
-        'avg_shots': total_shots / total_matches,
-        'avg_shots_on_target': total_shots_on_target / total_matches,
         'form_strength': form_strength,
         'total_matches': total_matches
     }
+
+def simple_prediction(match_data, historical_matches):
+    """Simple fallback prediction"""
+    home_team = match_data['home']
+    away_team = match_data['away']
+    current_score = match_data.get('home_score', 0), match_data.get('away_score', 0)
+    
+    home_stats = get_enhanced_team_stats(home_team, historical_matches)
+    away_stats = get_enhanced_team_stats(away_team, historical_matches)
+    
+    # Simple logic based on current score and historical performance
+    if current_score[0] > current_score[1]:
+        prediction = "Home Win"
+        confidence = 60 + home_stats['win_rate'] * 20
+    elif current_score[0] < current_score[1]:
+        prediction = "Away Win"
+        confidence = 60 + away_stats['win_rate'] * 20
+    else:
+        prediction = "Draw"
+        confidence = 40 + (home_stats['draw_rate'] + away_stats['draw_rate']) * 15
+    
+    return {
+        'prediction': prediction,
+        'confidence': min(95, max(30, confidence)),
+        'method': 'historical_analysis'
+    }
+
+def find_relevant_historical_data(match):
+    """Find relevant historical data for a match"""
+    if not historical_data or 'matches' not in historical_data:
+        return []
+    
+    home_team = match['home']
+    away_team = match['away']
+    league = match['league']
+    
+    relevant_matches = []
+    
+    for historical_match in historical_data['matches']:
+        # Check if teams match (either home-home or home-away)
+        teams_match = (
+            (historical_match['home_team'] == home_team and historical_match['away_team'] == away_team) or
+            (historical_match['home_team'] == away_team and historical_match['away_team'] == home_team)
+        )
+        
+        # Check if league is similar
+        league_similar = (
+            league.lower() in historical_match['league'].lower() or
+            historical_match['league'].lower() in league.lower()
+        )
+        
+        if teams_match or league_similar:
+            relevant_matches.append(historical_match)
+    
+    return relevant_matches
 
 def analyze_with_multiple_sources():
     """Enhanced analysis with confidence threshold"""
@@ -794,7 +852,7 @@ def analyze_with_multiple_sources():
             try:
                 historical_for_match = find_relevant_historical_data(match)
                 
-                if len(historical_for_match) >= 5:  # Increased minimum data
+                if len(historical_for_match) >= 3:  # Minimum data
                     prediction = predict_enhanced_outcome(match, historical_for_match)
                     
                     # Only send high-confidence predictions
@@ -842,18 +900,98 @@ def format_enhanced_prediction_message(match, prediction, historical_count):
 📈 **Historical Data:** {historical_count} matches analyzed
 🕐 **Analysis Time:** {current_time}
 
-💡 **PRO ANALYSIS:** High-confidence prediction based on:
-• Machine Learning Models
-• Historical Performance
-• Current Match Context
-• Team Form Analysis
+💡 **PRO ANALYSIS:** High-confidence prediction based on multiple data sources.
 
-⚠️ *Professional analysis for informational purposes. Bet responsibly.*"""
+⚠️ *Professional analysis for informational purposes.*"""
 
     return message
 
-# Rest of the helper functions (find_relevant_historical_data, load_historical_data, etc.)
-# remain similar but use the enhanced versions...
+def cleanup_old_data():
+    """Clean up old data to prevent memory issues"""
+    global historical_data, message_counter
+    
+    try:
+        current_time = get_pakistan_time()
+        cutoff_time = current_time - timedelta(hours=24)
+        
+        # Clean historical data
+        if historical_data and 'matches' in historical_data:
+            original_count = len(historical_data['matches'])
+            historical_data['matches'] = [
+                m for m in historical_data['matches'] 
+                if m.get('timestamp', current_time) > cutoff_time
+            ]
+            new_count = len(historical_data['matches'])
+            
+            if new_count < original_count:
+                logger.info(f"🧹 Cleaned {original_count - new_count} old historical records")
+        
+        # Reset message counter if it gets too large
+        if message_counter > 10000:
+            message_counter = 0
+            logger.info("🔄 Message counter reset")
+            
+        logger.info("✅ Data cleanup completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Data cleanup error: {e}")
+
+def get_api_status_message():
+    """Get API status message"""
+    status_msg = "📊 **PRO API USAGE STATUS**\n\n"
+    
+    for api_name, data in api_usage_tracker.items():
+        remaining_time = 60 - (datetime.now() - data['reset_time']).seconds
+        used = data['count']
+        limit = 10 if api_name in ['sportmonks', 'football_data'] else 60
+        
+        status_msg += f"**{api_name.upper()}:** {used}/{limit} requests\n"
+        status_msg += f"Reset in: {remaining_time}s\n"
+        status_msg += f"Failures: {data['failures']}\n"
+        
+        if used >= limit * 0.8:
+            status_msg += "Status: ⚠️ **NEAR LIMIT**\n"
+        elif used >= limit * 0.5:
+            status_msg += "Status: 🟡 **MODERATE**\n"
+        else:
+            status_msg += "Status: ✅ **SAFE**\n"
+        
+        status_msg += "\n"
+    
+    # Add historical data stats
+    if historical_data:
+        status_msg += f"📈 **Historical Data:** {historical_data.get('total_matches', 0)} matches\n"
+        status_msg += f"🕒 **Last Updated:** {historical_data.get('last_updated', 'Never')}\n\n"
+    
+    status_msg += f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
+    status_msg += f"📨 **Messages Sent:** {message_counter}\n"
+    status_msg += "🔄 Next check in 30 minutes"
+    
+    return status_msg
+
+def send_startup_message():
+    """Enhanced startup message"""
+    startup_msg = f"""🚀 **PRO API-Safe Multi-Source Bot Started Successfully!**
+
+⏰ **Startup Time:** {format_pakistan_time()}
+📊 **Data Sources:**
+   • Sportmonks API: {'✅ Available' if SPORTMONKS_API else '❌ Missing'}
+   • Football-Data.org: {'✅ Available' if FOOTBALL_DATA_API else '❌ Missing'}
+   • Historical Data: ✅ Available
+
+🛡️ **PRO Features:**
+   • Dual API Fallback System
+   • Enhanced ML Predictions
+   • Multi-Algorithm Consensus
+   • Confidence-Based Filtering (>{Config.MIN_CONFIDENCE_THRESHOLD}%)
+
+🎯 **Settings:**
+   • Cycle Interval: {Config.BOT_CYCLE_INTERVAL} seconds
+   • High-Accuracy Mode: Enabled
+
+Bot is now running and will send HIGH-CONFIDENCE predictions automatically!"""
+
+    send_telegram_message(startup_msg)
 
 def bot_worker():
     """Enhanced bot worker with better error recovery"""
@@ -862,14 +1000,14 @@ def bot_worker():
     
     bot_started = True
     
-    # Quick startup without long delays
+    # Quick startup
     logger.info("📥 Loading initial historical data...")
     load_historical_data()
     
     # Train model in background
     Thread(target=train_enhanced_ml_model, daemon=True).start()
     
-    time.sleep(3)
+    time.sleep(2)
     
     logger.info("📤 Sending startup message...")
     send_startup_message()
@@ -882,7 +1020,7 @@ def bot_worker():
             cycle += 1
             logger.info(f"🔄 PRO Cycle #{cycle} at {format_pakistan_time()}")
             
-            # Reload data less frequently to save API calls
+            # Reload data periodically
             if cycle % Config.HISTORICAL_DATA_RELOAD == 0:
                 Thread(target=load_historical_data, daemon=True).start()
             
@@ -907,8 +1045,8 @@ def bot_worker():
             # Adaptive sleep based on performance
             sleep_time = Config.BOT_CYCLE_INTERVAL
             if consecutive_failures > 3:
-                sleep_time = min(600, sleep_time * 1.5)  # Gradually increase sleep time
-                logger.info(f"💤 Adaptive sleep: {sleep_time} seconds due to consecutive failures")
+                sleep_time = min(600, sleep_time * 1.5)
+                logger.info(f"💤 Adaptive sleep: {sleep_time} seconds")
             
             logger.info(f"⏰ Waiting {sleep_time} seconds for next cycle...")
             time.sleep(sleep_time)
@@ -916,34 +1054,7 @@ def bot_worker():
         except Exception as e:
             consecutive_failures += 1
             logger.error(f"❌ PRO Bot worker error in cycle #{cycle}: {e}")
-            time.sleep(min(300, 60 * consecutive_failures))  # Adaptive error recovery
-
-def send_startup_message():
-    """Enhanced startup message"""
-    startup_msg = f"""🚀 **PRO API-Safe Multi-Source Bot Started Successfully!**
-
-⏰ **Startup Time:** {format_pakistan_time()}
-📊 **Data Sources:**
-   • Sportmonks API (Primary)
-   • Football-Data.org API (Backup)
-   • Peter McLagan (Historical)
-   • OpenFootball (Historical)
-
-🛡️ **PRO Features:**
-   • Dual API Fallback System
-   • Enhanced ML Predictions
-   • Multi-Algorithm Consensus
-   • Confidence-Based Filtering
-   • Adaptive Error Recovery
-
-🎯 **Prediction Settings:**
-   • Minimum Confidence: {Config.MIN_CONFIDENCE_THRESHOLD}%
-   • Cycle Interval: {Config.BOT_CYCLE_INTERVAL} seconds
-   • High-Accuracy Mode: Enabled
-
-Bot is now running and will send HIGH-CONFIDENCE predictions automatically!"""
-
-    send_telegram_message(startup_msg)
+            time.sleep(min(300, 60 * consecutive_failures))
 
 def start_bot_thread():
     """Start bot with monitoring"""
@@ -951,28 +1062,20 @@ def start_bot_thread():
         bot_thread = Thread(target=bot_worker, daemon=True)
         bot_thread.start()
         logger.info("🤖 PRO Bot worker thread started successfully")
-        
-        # Monitor thread health
-        Thread(target=monitor_bot_health, daemon=True).start()
         return True
     except Exception as e:
         logger.error(f"❌ Failed to start PRO bot thread: {e}")
         return False
 
-def monitor_bot_health():
-    """Monitor bot health and restart if needed"""
-    while True:
-        time.sleep(300)  # Check every 5 minutes
-        if not bot_started:
-            logger.warning("🔄 Bot appears stopped, attempting restart...")
-            start_bot_thread()
-
-# Auto-start bot
-logger.info("🎯 Auto-starting PRO API-Safe Multi-Source Bot...")
-if start_bot_thread():
-    logger.info("✅ PRO Bot auto-started successfully")
+# Auto-start bot only if we have basic configuration
+if BOT_TOKEN and OWNER_CHAT_ID:
+    logger.info("🎯 Auto-starting PRO API-Safe Multi-Source Bot...")
+    if start_bot_thread():
+        logger.info("✅ PRO Bot auto-started successfully")
+    else:
+        logger.error("❌ PRO Bot auto-start failed")
 else:
-    logger.error("❌ PRO Bot auto-start failed")
+    logger.warning("⚠️ Missing BOT_TOKEN or OWNER_CHAT_ID - bot not auto-started")
 
 if __name__ == "__main__":
     logger.info("🌐 Starting PRO Flask server...")

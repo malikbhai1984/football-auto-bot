@@ -16,40 +16,60 @@ load_dotenv()
 BOT_NAME = os.getenv("BOT_NAME", "MyBetAlert_Bot")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID", 0))
-API_KEY = os.getenv("API_KEY")
+SPORTMONKS_API = os.getenv("SPORTMONKS_API")
+APIFOOTBALL_API = os.getenv("APIFOOTBALL_API")
 DOMAIN = os.getenv("DOMAIN")
 PORT = int(os.environ.get("PORT", 8080))
 
-# -------- FIXED INDENTATION ----------
-if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY, DOMAIN]):
-    raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, API_KEY, or DOMAIN missing!")
+if not all([BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, DOMAIN]):
+    raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, or DOMAIN missing!")
 
-# Bot + Flask initialization
 bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)     # ❌ FIXED: name → __name__
-
-API_URL = "https://apiv3.apifootball.com"
+app = Flask(__name__)
 
 # -------------------------
-# Fetch live matches
+# Fetch live matches from SportMonks
 # -------------------------
-def fetch_live_matches():
+def fetch_live_sportmonks():
     try:
-        url = (
-            f"{API_URL}/?action=get_events&APIkey={API_KEY}"
-            f"&from={datetime.now().strftime('%Y-%m-%d')}"
-            f"&to={datetime.now().strftime('%Y-%m-%d')}"
-        )
+        url = f"https://soccer.sportmonks.com/api/v3/fixtures?api_token={SPORTMONKS_API}&status=live"
         resp = requests.get(url, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            return [m for m in data if m.get("match_live") == "1"]
+            return data.get("data", [])
         else:
-            print(f"❌ API Error: {resp.status_code}")
+            print(f"❌ SportMonks API Error: {resp.status_code}")
             return []
     except Exception as e:
-        print(f"❌ Live fetch error: {e}")
+        print(f"❌ SportMonks fetch error: {e}")
         return []
+
+# -------------------------
+# Fetch live matches from API-Football
+# -------------------------
+def fetch_live_apifootball():
+    try:
+        url = f"https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey={APIFOOTBALL_API}"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            print(f"❌ API-Football Error: {resp.status_code}")
+            return []
+    except Exception as e:
+        print(f"❌ API-Football fetch error: {e}")
+        return []
+
+# -------------------------
+# Combined fetch with fallback
+# -------------------------
+def fetch_live_matches():
+    matches = fetch_live_sportmonks()
+    if matches:
+        return matches, "SportMonks"
+    else:
+        matches = fetch_live_apifootball()
+        return matches, "API-Football"
 
 # -------------------------
 # Prediction engine
@@ -66,14 +86,14 @@ def calculate_probabilities(match):
     draw = max(5, 100 - home_win - away_win)
 
     ou = {
-        0.5: min(95, home_win + random.randint(-5, 5)),
-        1.5: min(95, home_win + random.randint(-5, 5)),
-        2.5: min(90, home_win + random.randint(-5, 5)),
-        3.5: min(85, home_win + random.randint(-5, 5)),
-        4.5: min(80, home_win + random.randint(-5, 5)),
+        0.5: min(95, home_win + random.randint(-5,5)),
+        1.5: min(95, home_win - 2 + random.randint(-5,5)),
+        2.5: min(90, home_win - 5 + random.randint(-5,5)),
+        3.5: min(85, home_win - 10 + random.randint(-5,5)),
+        4.5: min(80, home_win - 15 + random.randint(-5,5))
     }
 
-    btts = "Yes" if random.randint(0, 100) > 30 else "No"
+    btts = "Yes" if random.randint(0,100) > 30 else "No"
     last_10_min = random.randint(60, 90)
     cs1 = f"{home_win//10}-{away_win//10}"
     cs2 = f"{home_win//10+1}-{away_win//10}"
@@ -87,34 +107,29 @@ def calculate_probabilities(match):
         "btts": btts,
         "last_10_min": last_10_min,
         "correct_scores": [cs1, cs2],
-        "goal_minutes": goal_minutes,
+        "goal_minutes": goal_minutes
     }
 
-def generate_prediction(match):
-    home = match.get("match_hometeam_name")
-    away = match.get("match_awayteam_name")
-    home_score = match.get("match_hometeam_score") or "0"
-    away_score = match.get("match_awayteam_score") or "0"
+# -------------------------
+# Generate prediction message
+# -------------------------
+def generate_prediction(match, source):
+    home = match.get("home_name") or match.get("match_hometeam_name")
+    away = match.get("away_name") or match.get("match_awayteam_name")
+    home_score = match.get("home_score") or match.get("match_hometeam_score") or "0"
+    away_score = match.get("away_score") or match.get("match_awayteam_score") or "0"
 
     prob = calculate_probabilities(match)
 
-    msg = (
-        f"🤖 {BOT_NAME} LIVE PREDICTION\n"
-        f"{home} vs {away}\n"
-        f"Score: {home_score}-{away_score}\n"
-        f"Home Win: {prob['home_win']}% | Draw: {prob['draw']}% | Away Win: {prob['away_win']}%\n"
-        "📊 Over/Under Goals:\n"
-    )
-    for k, v in prob["over_under"].items():
+    msg = f"🤖 {BOT_NAME} LIVE PREDICTION ({source})\n{home} vs {away}\nScore: {home_score}-{away_score}\n"
+    msg += f"Home Win: {prob['home_win']}% | Draw: {prob['draw']}% | Away Win: {prob['away_win']}%\n"
+    msg += "📊 Over/Under Goals:\n"
+    for k,v in prob["over_under"].items():
         msg += f" - Over {k}: {v}%\n"
-
-    msg += (
-        f"BTTS: {prob['btts']}\n"
-        f"Last 10-min Goal Chance: {prob['last_10_min']}%\n"
-        f"Correct Scores: {', '.join(prob['correct_scores'])}\n"
-        f"High-probability Goal Minutes: {', '.join(map(str, prob['goal_minutes']))}\n"
-    )
-
+    msg += f"BTTS: {prob['btts']}\n"
+    msg += f"Last 10-min Goal Chance: {prob['last_10_min']}%\n"
+    msg += f"Correct Scores: {', '.join(prob['correct_scores'])}\n"
+    msg += f"High-probability Goal Minutes: {', '.join(map(str, prob['goal_minutes']))}\n"
     return msg
 
 # -------------------------
@@ -123,10 +138,10 @@ def generate_prediction(match):
 def auto_update():
     while True:
         try:
-            matches = fetch_live_matches()
+            matches, source = fetch_live_matches()
             if matches:
                 for match in matches:
-                    msg = generate_prediction(match)
+                    msg = generate_prediction(match, source)
                     try:
                         bot.send_message(OWNER_CHAT_ID, msg)
                         time.sleep(2)
@@ -134,10 +149,8 @@ def auto_update():
                         print(f"❌ Send message error: {e}")
             else:
                 print("⏳ No live matches currently.")
-
         except Exception as e:
             print(f"❌ Auto-update error: {e}")
-
         time.sleep(300)  # every 5 minutes
 
 # -------------------------
@@ -149,9 +162,9 @@ def send_help(message):
 
 @bot.message_handler(commands=['predict'])
 def send_predictions(message):
-    matches = fetch_live_matches()
+    matches, source = fetch_live_matches()
     if matches:
-        msg = generate_prediction(matches[0])
+        msg = generate_prediction(matches[0], source)
         bot.reply_to(message, msg)
     else:
         bot.reply_to(message, "⏳ No live matches currently.")
@@ -182,7 +195,8 @@ def setup_bot():
     bot.set_webhook(url=f"{DOMAIN}/{BOT_TOKEN}")
     print(f"✅ Webhook set: {DOMAIN}/{BOT_TOKEN}")
 
-    threading.Thread(target=auto_update, daemon=True).start()
+    t = threading.Thread(target=auto_update, daemon=True)
+    t.start()
     print("✅ Auto-update started!")
 
     bot.send_message(OWNER_CHAT_ID, f"🤖 {BOT_NAME} Started! Monitoring live matches every 5 minutes.")
@@ -192,7 +206,4 @@ def setup_bot():
 # Run
 # -------------------------
 setup_bot()
-
-# ❌ FIXED — name → __name__
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+app.run(host="0.0.0.0", port=PORT)

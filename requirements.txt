@@ -9,6 +9,10 @@ python-dotenv==1.0.1
 gunicorn
 
 
+pandas
+numpy
+
+
 
 
 #pyTelegramBotAPI==4.21.0

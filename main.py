@@ -1,12 +1,11 @@
 import os
 import requests
-import numpy as np
 import telebot
 from dotenv import load_dotenv
-from sklearn.linear_model import LogisticRegression
 import time
 from flask import Flask
 import logging
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -21,43 +20,43 @@ SPORTMONKS_API = os.getenv("API_KEY")
 
 # Validate environment variables
 if not BOT_TOKEN:
-    logger.error("BOT_TOKEN not found in environment variables")
+    logger.error("BOT_TOKEN not found")
 if not OWNER_CHAT_ID:
-    logger.error("OWNER_CHAT_ID not found in environment variables")
+    logger.error("OWNER_CHAT_ID not found") 
 if not SPORTMONKS_API:
-    logger.error("API_KEY not found in environment variables")
+    logger.error("API_KEY not found")
 
 try:
     OWNER_CHAT_ID = int(OWNER_CHAT_ID)
 except (ValueError, TypeError):
-    logger.error("Invalid OWNER_CHAT_ID. Must be a valid integer.")
+    logger.error("Invalid OWNER_CHAT_ID")
 
-logger.info("Environment variables loaded successfully")
+logger.info("Environment variables loaded")
 
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# Flask app
 app = Flask(__name__)
 
 @app.route("/")
 def health():
-    return "Bot is running!", 200
+    return "⚽ Football Bot is Running!", 200
 
 @app.route("/health")
 def health_check():
     return "OK", 200
 
-# ML Model
-try:
-    logger.info("Training ML model...")
-    ml_model = LogisticRegression(random_state=42)
-    X_dummy = np.random.rand(50, 3)
-    y_dummy = np.random.randint(0, 2, 50)
-    ml_model.fit(X_dummy, y_dummy)
-    logger.info("ML model trained successfully")
-except Exception as e:
-    logger.error(f"ML model training failed: {e}")
-    ml_model = None
+# Simple prediction function (no numpy/scikit-learn dependency)
+def predict_goal_chance(stats):
+    """Simple goal prediction without external dependencies"""
+    last_3_goals = stats["last_3_min_goals"]
+    shots_on_target = stats["shots_on_target"]
+    possession = stats["possession"]
+    
+    # Simple formula for goal chance
+    base_chance = 50  # Base 50% chance
+    chance = base_chance + (last_3_goals * 15) + (shots_on_target * 5) + ((possession - 50) * 0.3)
+    
+    # Ensure chance is between 0-100
+    return max(0, min(100, chance))
 
 # Leagues IDs
 TOP_LEAGUES_IDS = [39, 140, 78, 61, 135, 2, 3, 8]
@@ -102,23 +101,20 @@ def fetch_live_matches():
                     "away": away_team,
                     "league": league_name,
                     "stats": {
-                        "last_3_min_goals": np.random.randint(0, 2),
-                        "shots_on_target": np.random.randint(0, 5),
-                        "possession": np.random.randint(40, 60)
+                        "last_3_min_goals": random.randint(0, 2),
+                        "shots_on_target": random.randint(0, 5),
+                        "possession": random.randint(40, 60)
                     }
                 })
         
         logger.info(f"Found {len(matches)} live matches")
         return matches
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Network error: {e}")
-        return []
     except Exception as e:
         logger.error(f"Error fetching matches: {e}")
         return []
 
 def start_bot():
-    logger.info("Bot service starting...")
+    logger.info("🤖 Bot service starting...")
     
     # Send startup message
     try:
@@ -131,31 +127,21 @@ def start_bot():
             live_matches = fetch_live_matches()
             
             for m in live_matches:
-                if ml_model is None:
-                    continue
-                    
                 stats = m["stats"]
-                X = np.array([[stats["last_3_min_goals"], stats["shots_on_target"], stats["possession"]]])
+                chance = predict_goal_chance(stats)
                 
-                try:
-                    chance = ml_model.predict_proba(X)[0][1] * 100
-                    logger.info(f"Match: {m['home']} vs {m['away']} - Chance: {chance:.2f}%")
-                    
-                    if chance >= 80:
-                        send_goal_alert(m["home"], m["away"], m["league"], round(chance, 2))
-                except Exception as e:
-                    logger.error(f"Prediction error: {e}")
+                logger.info(f"Match: {m['home']} vs {m['away']} - Chance: {chance:.2f}%")
+                
+                if chance >= 70:  # Lowered threshold for testing
+                    send_goal_alert(m["home"], m["away"], m["league"], round(chance, 2))
                     
             time.sleep(60)
-        except KeyboardInterrupt:
-            logger.info("Bot stopped by user")
-            break
         except Exception as e:
             logger.error(f"Bot loop error: {e}")
             time.sleep(60)
 
 if __name__ == "__main__":
-    logger.info("Application starting...")
+    logger.info("🚀 Application starting...")
     
     # Start bot in background thread
     from threading import Thread

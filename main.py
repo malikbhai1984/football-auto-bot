@@ -61,10 +61,20 @@ TOP_LEAGUES = {
     203: "UEFA Champions League"
 }
 
+# Configuration Constants
+class Config:
+    SPORTMONKS_LIMIT_PER_MINUTE = 8
+    GITHUB_LIMIT_PER_MINUTE = 10
+    BOT_CYCLE_INTERVAL = 600  # 10 minutes
+    DATA_CLEANUP_INTERVAL = 24  # cycles
+    HISTORICAL_DATA_RELOAD = 24  # cycles
+
 # Global variables
 bot_started = False
 message_counter = 0
 historical_data = {}
+model = None
+scaler = StandardScaler()
 api_usage_tracker = {
     'sportmonks': {'count': 0, 'reset_time': datetime.now()},
     'github': {'count': 0, 'reset_time': datetime.now()}
@@ -94,7 +104,6 @@ def check_api_limits(api_name):
         
         # Check limits
         if api_name == 'sportmonks':
-            # 20 requests/hour for free plan
             if api_data['count'] >= 15:  # Safe buffer
                 logger.warning(f"⚠️ {api_name.upper()} API near limit: {api_data['count']}/20")
                 return False
@@ -103,7 +112,6 @@ def check_api_limits(api_name):
                 return False
                 
         elif api_name == 'github':
-            # 60 requests/hour for GitHub
             if api_data['count'] >= 50:  # Safe buffer
                 logger.warning(f"⚠️ {api_name.upper()} API near limit: {api_data['count']}/60")
                 return False
@@ -169,18 +177,23 @@ def api_status():
     
     return status_msg
 
-def send_telegram_message(message):
+def send_telegram_message(message, max_retries=3):
     """Send message to Telegram with retry logic"""
     global message_counter
-    try:
-        message_counter += 1
-        logger.info(f"📤 Sending message #{message_counter}")
-        bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
-        logger.info(f"✅ Message #{message_counter} sent successfully")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Failed to send message #{message_counter}: {e}")
-        return False
+    for attempt in range(max_retries):
+        try:
+            message_counter += 1
+            logger.info(f"📤 Sending message #{message_counter} (Attempt {attempt + 1})")
+            bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
+            logger.info(f"✅ Message #{message_counter} sent successfully")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Attempt {attempt + 1} failed for message #{message_counter}: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)  # Wait before retry
+            else:
+                logger.error(f"🚫 All {max_retries} attempts failed for message #{message_counter}")
+    return False
 
 def fetch_petermclagan_data():
     """Fetch historical data from Peter McLagan FootballAPI"""
@@ -217,7 +230,8 @@ def fetch_petermclagan_data():
                             'away_goals': row.get('FTAG', 0),
                             'date': row.get('Date', ''),
                             'result': row.get('FTR', ''),
-                            'source': 'petermclagan'
+                            'source': 'petermclagan',
+                            'timestamp': get_pakistan_time()
                         }
                         historical_matches.append(match_data)
                     
@@ -272,7 +286,8 @@ def fetch_openfootball_data():
                                 'away_goals': int(parts[4]) if parts[4].isdigit() else 0,
                                 'date': parts[0],
                                 'result': 'H' if int(parts[3]) > int(parts[4]) else 'A' if int(parts[3]) < int(parts[4]) else 'D',
-                                'source': 'openfootball'
+                                'source': 'openfootball',
+                                'timestamp': get_pakistan_time()
                             }
                             openfootball_matches.append(match_data)
                     
@@ -346,7 +361,8 @@ def fetch_current_live_matches():
                                 "away_score": away_score,
                                 "status": status,
                                 "match_id": match.get("id"),
-                                "is_live": True
+                                "is_live": True,
+                                "timestamp": get_pakistan_time()
                             }
                             
                             current_matches.append(match_data)
@@ -358,50 +374,327 @@ def fetch_current_live_matches():
         logger.error(f"❌ Live matches error: {e}")
         return []
 
-# ... [Rest of the code remains similar but with API protection]
+def load_historical_data():
+    """Load historical data from multiple sources"""
+    global historical_data
+    try:
+        logger.info("📥 Loading historical data from multiple sources...")
+        
+        # Fetch from both sources
+        petermclagan_data = fetch_petermclagan_data()
+        openfootball_data = fetch_openfootball_data()
+        
+        # Combine all data
+        all_data = petermclagan_data + openfootball_data
+        
+        # Store in global variable with timestamp
+        historical_data = {
+            'matches': all_data,
+            'last_updated': get_pakistan_time(),
+            'total_matches': len(all_data),
+            'sources': {
+                'petermclagan': len(petermclagan_data),
+                'openfootball': len(openfootball_data)
+            }
+        }
+        
+        logger.info(f"✅ Historical data loaded: {len(all_data)} total matches")
+        logger.info(f"📊 Sources - PeterMcLagan: {len(petermclagan_data)}, OpenFootball: {len(openfootball_data)}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Historical data loading error: {e}")
+        return False
 
-def bot_worker():
-    """Main bot worker with API protection"""
-    global bot_started
-    logger.info("🔄 Starting API-Safe Bot...")
+def train_ml_model():
+    """Train ML model on historical data"""
+    global model, scaler
     
-    # Load historical data first
-    logger.info("📥 Loading historical databases...")
-    if load_historical_data():
-        logger.info("✅ Historical data loaded successfully")
+    try:
+        if not historical_data or 'matches' not in historical_data:
+            logger.warning("⚠️ No historical data available for ML training")
+            return False
+        
+        matches = historical_data['matches']
+        if len(matches) < 50:  # Minimum matches required
+            logger.warning(f"⚠️ Insufficient data for ML training: {len(matches)} matches")
+            return False
+        
+        # Prepare features and labels
+        features = []
+        labels = []
+        
+        for match in matches:
+            try:
+                # Basic features
+                home_goals = match.get('home_goals', 0)
+                away_goals = match.get('away_goals', 0)
+                
+                # Determine result (H=Home Win, A=Away Win, D=Draw)
+                result = match.get('result', '')
+                if result == 'H':
+                    label = 0  # Home win
+                elif result == 'A':
+                    label = 1  # Away win
+                else:
+                    label = 2  # Draw
+                
+                # Simple features for now
+                feature = [home_goals, away_goals, random.random()]  # Add some randomness
+                features.append(feature)
+                labels.append(label)
+                
+            except Exception as e:
+                continue
+        
+        if len(features) < 30:
+            logger.warning("⚠️ Not enough valid matches for ML training")
+            return False
+        
+        # Scale features
+        features_scaled = scaler.fit_transform(features)
+        
+        # Train model
+        model = RandomForestClassifier(n_estimators=50, random_state=42)
+        model.fit(features_scaled, labels)
+        
+        logger.info(f"✅ ML Model trained on {len(features)} matches")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ ML Model training error: {e}")
+        return False
+
+def predict_match_outcome(match_data, historical_matches):
+    """Predict match outcome using ML and historical data"""
+    try:
+        if model is None:
+            # Fallback to simple prediction based on historical data
+            return simple_prediction(match_data, historical_matches)
+        
+        # Prepare features for prediction
+        home_team = match_data['home']
+        away_team = match_data['away']
+        
+        # Get team historical performance
+        home_stats = get_team_stats(home_team, historical_matches)
+        away_stats = get_team_stats(away_team, historical_matches)
+        
+        # Create feature vector
+        features = [
+            home_stats['avg_goals_for'],
+            away_stats['avg_goals_for'],
+            (home_stats['win_rate'] - away_stats['win_rate'])
+        ]
+        
+        # Scale features and predict
+        features_scaled = scaler.transform([features])
+        prediction = model.predict(features_scaled)[0]
+        probability = model.predict_proba(features_scaled)[0]
+        
+        outcomes = ['Home Win', 'Away Win', 'Draw']
+        confidence = max(probability) * 100
+        
+        return {
+            'prediction': outcomes[prediction],
+            'confidence': round(confidence, 1),
+            'method': 'ml_model'
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Prediction error: {e}")
+        # Fallback to simple prediction
+        return simple_prediction(match_data, historical_matches)
+
+def simple_prediction(match_data, historical_matches):
+    """Simple prediction based on historical data"""
+    home_team = match_data['home']
+    away_team = match_data['away']
+    current_score = match_data.get('home_score', 0), match_data.get('away_score', 0)
     
-    time.sleep(10)
+    home_stats = get_team_stats(home_team, historical_matches)
+    away_stats = get_team_stats(away_team, historical_matches)
     
-    logger.info("📤 Sending startup message...")
-    send_startup_message()
+    # Simple logic based on current score and historical performance
+    if current_score[0] > current_score[1]:
+        prediction = "Home Win"
+        confidence = 60 + home_stats['win_rate'] * 20
+    elif current_score[0] < current_score[1]:
+        prediction = "Away Win"
+        confidence = 60 + away_stats['win_rate'] * 20
+    else:
+        prediction = "Draw"
+        confidence = 40 + (home_stats['draw_rate'] + away_stats['draw_rate']) * 15
     
-    cycle = 0
-    while True:
-        try:
-            cycle += 1
-            logger.info(f"🔄 API-Safe Cycle #{cycle} at {format_pakistan_time()}")
+    return {
+        'prediction': prediction,
+        'confidence': min(95, max(30, confidence)),  # Cap between 30-95%
+        'method': 'historical_analysis'
+    }
+
+def get_team_stats(team_name, historical_matches):
+    """Get team statistics from historical matches"""
+    team_matches = [m for m in historical_matches 
+                   if m['home_team'] == team_name or m['away_team'] == team_name]
+    
+    if not team_matches:
+        return {'win_rate': 0.3, 'draw_rate': 0.3, 'avg_goals_for': 1.2, 'total_matches': 0}
+    
+    wins = 0
+    draws = 0
+    goals_for = 0
+    total_matches = len(team_matches)
+    
+    for match in team_matches:
+        if match['home_team'] == team_name:
+            goals_for += match.get('home_goals', 0)
+            if match.get('result') == 'H':
+                wins += 1
+            elif match.get('result') == 'D':
+                draws += 1
+        else:
+            goals_for += match.get('away_goals', 0)
+            if match.get('result') == 'A':
+                wins += 1
+            elif match.get('result') == 'D':
+                draws += 1
+    
+    return {
+        'win_rate': wins / total_matches,
+        'draw_rate': draws / total_matches,
+        'avg_goals_for': goals_for / total_matches,
+        'total_matches': total_matches
+    }
+
+def analyze_with_multiple_sources():
+    """Main analysis function using multiple data sources"""
+    try:
+        logger.info("🔍 Starting multi-source analysis...")
+        
+        # Fetch current live matches
+        live_matches = fetch_current_live_matches()
+        
+        if not live_matches:
+            logger.info("😴 No live matches found for analysis")
+            return 0
+        
+        predictions_sent = 0
+        
+        for match in live_matches:
+            try:
+                # Find relevant historical data
+                historical_for_match = find_relevant_historical_data(match)
+                
+                if len(historical_for_match) >= 3:  # Minimum historical data
+                    # Make prediction
+                    prediction = predict_match_outcome(match, historical_for_match)
+                    
+                    # Format and send message
+                    message = format_prediction_message(match, prediction, len(historical_for_match))
+                    
+                    if send_telegram_message(message):
+                        predictions_sent += 1
+                        logger.info(f"✅ Prediction sent for {match['home']} vs {match['away']}")
+                    
+                    # Wait between messages to avoid rate limiting
+                    time.sleep(2)
+                    
+                else:
+                    logger.info(f"📊 Insufficient historical data for {match['home']} vs {match['away']}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error analyzing match {match.get('home', 'Unknown')}: {e}")
+                continue
+        
+        logger.info(f"📈 Analysis complete: {predictions_sent} predictions sent")
+        return predictions_sent
+        
+    except Exception as e:
+        logger.error(f"❌ Multi-source analysis error: {e}")
+        return 0
+
+def find_relevant_historical_data(match):
+    """Find relevant historical data for a match"""
+    if not historical_data or 'matches' not in historical_data:
+        return []
+    
+    home_team = match['home']
+    away_team = match['away']
+    league = match['league']
+    
+    relevant_matches = []
+    
+    for historical_match in historical_data['matches']:
+        # Check if teams match (either home-home or home-away)
+        teams_match = (
+            (historical_match['home_team'] == home_team and historical_match['away_team'] == away_team) or
+            (historical_match['home_team'] == away_team and historical_match['away_team'] == home_team)
+        )
+        
+        # Check if league is similar
+        league_similar = (
+            league.lower() in historical_match['league'].lower() or
+            historical_match['league'].lower() in league.lower()
+        )
+        
+        if teams_match or league_similar:
+            relevant_matches.append(historical_match)
+    
+    return relevant_matches
+
+def format_prediction_message(match, prediction, historical_count):
+    """Format prediction message for Telegram"""
+    current_time = format_pakistan_time()
+    
+    message = f"""⚽ **MATCH PREDICTION** ⚽
+
+🏆 **League:** {match['league']}
+🕒 **Minute:** {match['minute']}
+📊 **Score:** {match['score']}
+
+🏠 **{match['home']}** vs 🛫 **{match['away']}**
+
+🔮 **Prediction:** {prediction['prediction']}
+🎯 **Confidence:** {prediction['confidence']}%
+🛠️ **Method:** {prediction['method']}
+
+📈 **Historical Data:** {historical_count} matches analyzed
+🕐 **Analysis Time:** {current_time}
+
+⚠️ *Disclaimer: For entertainment purposes only. Bet responsibly.*"""
+    
+    return message
+
+def cleanup_old_data():
+    """Clean up old data to prevent memory issues"""
+    global historical_data, message_counter
+    
+    try:
+        current_time = get_pakistan_time()
+        cutoff_time = current_time - timedelta(hours=24)
+        
+        # Clean historical data
+        if historical_data and 'matches' in historical_data:
+            original_count = len(historical_data['matches'])
+            historical_data['matches'] = [
+                m for m in historical_data['matches'] 
+                if m.get('timestamp', current_time) > cutoff_time
+            ]
+            new_count = len(historical_data['matches'])
             
-            # Reload historical data every 24 cycles (approx 3 hours) to save API calls
-            if cycle % 24 == 0:
-                logger.info("🔄 Reloading historical data...")
-                load_historical_data()
+            if new_count < original_count:
+                logger.info(f"🧹 Cleaned {original_count - new_count} old historical records")
+        
+        # Reset message counter if it gets too large
+        if message_counter > 10000:
+            message_counter = 0
+            logger.info("🔄 Message counter reset")
             
-            # Analyze matches
-            predictions = analyze_with_multiple_sources()
-            logger.info(f"📈 Cycle #{cycle}: {predictions} analyses sent")
-            
-            # Send API status every 12 cycles
-            if cycle % 12 == 0:
-                api_status = get_api_status_message()
-                send_telegram_message(api_status)
-            
-            # Wait 10 minutes instead of 7 to reduce API calls
-            logger.info("⏰ Waiting 10 minutes for next cycle...")
-            time.sleep(600)  # 10 minutes
-            
-        except Exception as e:
-            logger.error(f"❌ API-safe bot error: {e}")
-            time.sleep(600)
+        logger.info("✅ Data cleanup completed")
+        
+    except Exception as e:
+        logger.error(f"❌ Data cleanup error: {e}")
 
 def get_api_status_message():
     """Get API status message"""
@@ -424,16 +717,120 @@ def get_api_status_message():
         
         status_msg += "\n"
     
+    # Add historical data stats
+    if historical_data:
+        status_msg += f"📈 **Historical Data:** {historical_data.get('total_matches', 0)} matches\n"
+        status_msg += f"🕒 **Last Updated:** {historical_data.get('last_updated', 'Never').strftime('%H:%M') if isinstance(historical_data.get('last_updated'), datetime) else 'Never'}\n\n"
+    
     status_msg += f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
+    status_msg += f"📨 **Messages Sent:** {message_counter}\n"
     status_msg += "🔄 Next check in 2 hours"
     
     return status_msg
 
-# ... [Rest of the functions remain similar]
+def send_startup_message():
+    """Send startup message to owner"""
+    startup_msg = f"""🚀 *API-Safe Multi-Source Bot Started Successfully!*
 
-# Auto-start bot
+⏰ **Startup Time:** {format_pakistan_time()}
+📊 **Data Sources:**
+   • Sportmonks (Live Matches)
+   • Peter McLagan (Historical)
+   • OpenFootball (Historical)
+
+🛡️ **Features:**
+   • Rate Limiting Protection
+   • Multi-source Analysis
+   • ML Model Predictions
+   • Automatic Data Cleaning
+
+📈 **Initial Stats:**
+   • Historical Matches: {historical_data.get('total_matches', 0) if historical_data else 0}
+   • Top Leagues: {len(TOP_LEAGUES)}
+   • Cycle Interval: {Config.BOT_CYCLE_INTERVAL} seconds
+
+Bot is now running and will send predictions automatically!"""
+    
+    send_telegram_message(startup_msg)
+
+def start_bot_thread():
+    """Start the bot worker in a separate thread"""
+    try:
+        bot_thread = Thread(target=bot_worker, daemon=True)
+        bot_thread.start()
+        logger.info("🤖 Bot worker thread started successfully")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to start bot thread: {e}")
+        return False
+
+def bot_worker():
+    """Main bot worker with API protection"""
+    global bot_started
+    logger.info("🔄 Starting API-Safe Bot Worker...")
+    
+    bot_started = True
+    
+    # Initial data loading
+    logger.info("📥 Loading initial historical data...")
+    if load_historical_data():
+        logger.info("✅ Historical data loaded successfully")
+        
+        # Train ML model
+        logger.info("🤖 Training ML model...")
+        if train_ml_model():
+            logger.info("✅ ML model trained successfully")
+        else:
+            logger.warning("⚠️ ML model training failed, using fallback methods")
+    else:
+        logger.error("❌ Initial historical data loading failed")
+    
+    time.sleep(5)
+    
+    # Send startup message
+    logger.info("📤 Sending startup message...")
+    send_startup_message()
+    
+    cycle = 0
+    while True:
+        try:
+            cycle += 1
+            logger.info(f"🔄 API-Safe Cycle #{cycle} at {format_pakistan_time()}")
+            
+            # Reload historical data periodically
+            if cycle % Config.HISTORICAL_DATA_RELOAD == 0:
+                logger.info("🔄 Reloading historical data...")
+                load_historical_data()
+                train_ml_model()  # Retrain model with new data
+            
+            # Clean up old data
+            if cycle % Config.DATA_CLEANUP_INTERVAL == 0:
+                logger.info("🧹 Cleaning up old data...")
+                cleanup_old_data()
+            
+            # Analyze matches
+            predictions_sent = analyze_with_multiple_sources()
+            logger.info(f"📈 Cycle #{cycle}: {predictions_sent} analyses sent")
+            
+            # Send API status periodically
+            if cycle % 12 == 0:  # Every 2 hours
+                api_status_msg = get_api_status_message()
+                send_telegram_message(api_status_msg)
+            
+            # Wait for next cycle
+            logger.info(f"⏰ Waiting {Config.BOT_CYCLE_INTERVAL} seconds for next cycle...")
+            time.sleep(Config.BOT_CYCLE_INTERVAL)
+            
+        except Exception as e:
+            logger.error(f"❌ Bot worker error in cycle #{cycle}: {e}")
+            time.sleep(Config.BOT_CYCLE_INTERVAL)  # Wait before retry
+
+# Auto-start bot when module loads
 logger.info("🎯 Auto-starting API-Safe Multi-Source Bot...")
-start_bot_thread()
+if start_bot_thread():
+    logger.info("✅ Bot auto-started successfully")
+else:
+    logger.error("❌ Bot auto-start failed")
 
 if __name__ == "__main__":
     logger.info("🌐 Starting Flask server...")

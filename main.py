@@ -21,41 +21,55 @@ APIFOOTBALL_API = os.getenv("APIFOOTBALL_API")
 DOMAIN = os.getenv("DOMAIN")
 PORT = int(os.getenv("PORT", 8080))
 
+# Check required env variables
 if not all([BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, DOMAIN]):
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, or DOMAIN missing!")
 
+# -------------------------
+# Initialize Bot & Flask
+# -------------------------
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 # -------------------------
-# Fetch live matches
+# Fetch live matches from APIs
 # -------------------------
 def fetch_live_matches():
-    # Try SportMonks first
+    matches = []
+    today = datetime.now().strftime('%Y-%m-%d')
     try:
-        url_sm = f"https://soccer.sportmonks.com/api/v2.0/livescores?api_token={SPORTMONKS_API}"
-        resp = requests.get(url_sm, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json().get("data", [])
-            if data:
-                return data
-    except:
-        pass
+        # Sportmonks API
+        sm_url = f"https://soccer.sportmonks.com/api/v2.0/livescores?api_token={SPORTMONKS_API}"
+        sm_resp = requests.get(sm_url, timeout=10).json()
+        for m in sm_resp.get('data', []):
+            matches.append({
+                "match_hometeam_name": m['localTeam']['data']['name'],
+                "match_awayteam_name": m['visitorTeam']['data']['name'],
+                "match_hometeam_score": m.get('scores', {}).get('localteam_score', '0'),
+                "match_awayteam_score": m.get('scores', {}).get('visitorteam_score', '0'),
+                "match_live": "1"
+            })
 
-    # Fallback to API-Football
-    try:
-        url_af = f"https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey={APIFOOTBALL_API}"
-        resp = requests.get(url_af, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            return [m for m in data if m.get("match_live") == "1"]
-    except:
-        pass
+        # API-Football as backup
+        af_url = f"https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey={APIFOOTBALL_API}"
+        af_resp = requests.get(af_url, timeout=10)
+        if af_resp.status_code == 200:
+            for m in af_resp.json():
+                matches.append({
+                    "match_hometeam_name": m.get("match_hometeam_name"),
+                    "match_awayteam_name": m.get("match_awayteam_name"),
+                    "match_hometeam_score": m.get("match_hometeam_score") or '0',
+                    "match_awayteam_score": m.get("match_awayteam_score") or '0',
+                    "match_live": m.get("match_live")
+                })
+    except Exception as e:
+        print(f"❌ Fetch live matches error: {e}")
 
-    return []
+    # Only live matches
+    return [m for m in matches if m.get("match_live") == "1"]
 
 # -------------------------
-# Prediction engine
+# Prediction Engine
 # -------------------------
 def calculate_probabilities(match):
     base = 85
@@ -93,17 +107,13 @@ def calculate_probabilities(match):
         "goal_minutes": goal_minutes
     }
 
-# -------------------------
-# Generate prediction message
-# -------------------------
 def generate_prediction(match):
-    home = match.get("home_team") or match.get("match_hometeam_name", "Home")
-    away = match.get("away_team") or match.get("match_awayteam_name", "Away")
-    home_score = match.get("scores", {}).get("localteam_score") or match.get("match_hometeam_score") or "0"
-    away_score = match.get("scores", {}).get("visitorteam_score") or match.get("match_awayteam_score") or "0"
+    home = match.get("match_hometeam_name")
+    away = match.get("match_awayteam_name")
+    home_score = match.get("match_hometeam_score") or "0"
+    away_score = match.get("match_awayteam_score") or "0"
 
     prob = calculate_probabilities(match)
-
     msg = f"🤖 {BOT_NAME} LIVE PREDICTION\n{home} vs {away}\nScore: {home_score}-{away_score}\n"
     msg += f"Home Win: {prob['home_win']}% | Draw: {prob['draw']}% | Away Win: {prob['away_win']}%\n"
     msg += "📊 Over/Under Goals:\n"
@@ -139,7 +149,7 @@ def auto_update():
 # -------------------------
 # Telegram commands
 # -------------------------
-@bot.message_handler(commands=['start','help'])
+@bot.message_handler(commands=['start', 'help'])
 def send_help(message):
     bot.reply_to(message, f"🤖 {BOT_NAME} monitoring live matches. Use /predict to get predictions.")
 
@@ -189,4 +199,6 @@ def setup_bot():
 # Run
 # -------------------------
 setup_bot()
-app.run(host="0.0.0.0", port=PORT)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=PORT)

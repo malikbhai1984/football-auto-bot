@@ -16,60 +16,68 @@ load_dotenv()
 BOT_NAME = os.getenv("BOT_NAME", "MyBetAlert_Bot")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID", 0))
+API_KEY = os.getenv("API_KEY")
 SPORTMONKS_API = os.getenv("SPORTMONKS_API")
-APIFOOTBALL_API = os.getenv("APIFOOTBALL_API")
 DOMAIN = os.getenv("DOMAIN")
 PORT = int(os.getenv("PORT", 8080))
 
-# Check required env variables
-if not all([BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, DOMAIN]):
-    raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, or DOMAIN missing!")
+# -------------------------
+# Env check
+# -------------------------
+missing_vars = []
+for var_name, var_value in [
+    ("BOT_TOKEN", BOT_TOKEN),
+    ("OWNER_CHAT_ID", OWNER_CHAT_ID),
+    ("API_KEY", API_KEY),
+    ("SPORTMONKS_API", SPORTMONKS_API),
+    ("DOMAIN", DOMAIN)
+]:
+    if not var_value:
+        missing_vars.append(var_name)
 
-# -------------------------
-# Initialize Bot & Flask
-# -------------------------
+if missing_vars:
+    raise ValueError(f"❌ Missing env vars: {', '.join(missing_vars)}")
+
+print("✅ All environment variables loaded successfully.")
+
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
 # -------------------------
-# Fetch live matches from APIs
+# API URLs
+# -------------------------
+APIFOOTBALL_URL = "https://apiv3.apifootball.com"
+SPORTMONKS_URL = "https://soccer.sportmonks.com/api/v2.0/livescores"
+
+# -------------------------
+# Fetch live matches
 # -------------------------
 def fetch_live_matches():
     matches = []
-    today = datetime.now().strftime('%Y-%m-%d')
     try:
-        # Sportmonks API
-        sm_url = f"https://soccer.sportmonks.com/api/v2.0/livescores?api_token={SPORTMONKS_API}"
-        sm_resp = requests.get(sm_url, timeout=10).json()
-        for m in sm_resp.get('data', []):
-            matches.append({
-                "match_hometeam_name": m['localTeam']['data']['name'],
-                "match_awayteam_name": m['visitorTeam']['data']['name'],
-                "match_hometeam_score": m.get('scores', {}).get('localteam_score', '0'),
-                "match_awayteam_score": m.get('scores', {}).get('visitorteam_score', '0'),
-                "match_live": "1"
-            })
-
-        # API-Football as backup
-        af_url = f"https://apiv3.apifootball.com/?action=get_events&match_live=1&APIkey={APIFOOTBALL_API}"
-        af_resp = requests.get(af_url, timeout=10)
-        if af_resp.status_code == 200:
-            for m in af_resp.json():
-                matches.append({
-                    "match_hometeam_name": m.get("match_hometeam_name"),
-                    "match_awayteam_name": m.get("match_awayteam_name"),
-                    "match_hometeam_score": m.get("match_hometeam_score") or '0',
-                    "match_awayteam_score": m.get("match_awayteam_score") or '0',
-                    "match_live": m.get("match_live")
-                })
+        # API-Football
+        url1 = f"{APIFOOTBALL_URL}/?action=get_events&APIkey={API_KEY}&from={datetime.now().strftime('%Y-%m-%d')}&to={datetime.now().strftime('%Y-%m-%d')}"
+        resp1 = requests.get(url1, timeout=10)
+        if resp1.status_code == 200:
+            data1 = resp1.json()
+            matches += [m for m in data1 if m.get("match_live") == "1"]
     except Exception as e:
-        print(f"❌ Fetch live matches error: {e}")
+        print(f"❌ API-Football error: {e}")
 
-    # Only live matches
-    return [m for m in matches if m.get("match_live") == "1"]
+    try:
+        # SportMonks
+        url2 = f"{SPORTMONKS_URL}?api_token={SPORTMONKS_API}"
+        resp2 = requests.get(url2, timeout=10)
+        if resp2.status_code == 200:
+            data2 = resp2.json()
+            matches += data2.get("data", [])
+    except Exception as e:
+        print(f"❌ SportMonks error: {e}")
+
+    return matches
 
 # -------------------------
-# Prediction Engine
+# Prediction engine
 # -------------------------
 def calculate_probabilities(match):
     base = 85
@@ -108,12 +116,13 @@ def calculate_probabilities(match):
     }
 
 def generate_prediction(match):
-    home = match.get("match_hometeam_name")
-    away = match.get("match_awayteam_name")
+    home = match.get("match_hometeam_name") or match.get("localTeam", {}).get("data", {}).get("name", "Home")
+    away = match.get("match_awayteam_name") or match.get("visitorTeam", {}).get("data", {}).get("name", "Away")
     home_score = match.get("match_hometeam_score") or "0"
     away_score = match.get("match_awayteam_score") or "0"
 
     prob = calculate_probabilities(match)
+
     msg = f"🤖 {BOT_NAME} LIVE PREDICTION\n{home} vs {away}\nScore: {home_score}-{away_score}\n"
     msg += f"Home Win: {prob['home_win']}% | Draw: {prob['draw']}% | Away Win: {prob['away_win']}%\n"
     msg += "📊 Over/Under Goals:\n"
@@ -198,7 +207,6 @@ def setup_bot():
 # -------------------------
 # Run
 # -------------------------
-setup_bot()
-
 if __name__ == "__main__":
+    setup_bot()
     app.run(host="0.0.0.0", port=PORT)

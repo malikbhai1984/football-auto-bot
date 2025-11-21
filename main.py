@@ -22,7 +22,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
 SPORTMONKS_API = os.getenv("API_KEY")
 
-logger.info("🚀 Initializing REAL-TIME Betting Bot...")
+logger.info("🚀 Initializing COMPLETE Prediction Bot...")
 
 # Validate environment variables
 if not BOT_TOKEN:
@@ -72,20 +72,11 @@ def format_pakistan_time(dt=None):
 
 @app.route("/")
 def health():
-    return "⚽ REAL-TIME Betting Bot is Running!", 200
+    return "⚽ COMPLETE Prediction Bot is Running!", 200
 
 @app.route("/health")
 def health_check():
     return "OK", 200
-
-@app.route("/test-message")
-def test_message():
-    """Test endpoint to send a message"""
-    try:
-        send_telegram_message("🧪 **REAL-TIME BOT TEST**\n\n✅ Bot is working!\n🕒 " + format_pakistan_time())
-        return "Test message sent!", 200
-    except Exception as e:
-        return f"Error: {e}", 500
 
 def send_telegram_message(message):
     """Send message to Telegram with retry logic"""
@@ -101,7 +92,7 @@ def send_telegram_message(message):
         return False
 
 def fetch_current_live_matches():
-    """Fetch ONLY current live matches that are actually playing NOW"""
+    """Fetch ONLY current live matches"""
     try:
         url = f"https://api.sportmonks.com/v3/football/livescores?api_token={SPORTMONKS_API}&include=league,participants"
         logger.info("🌐 Fetching CURRENT live matches...")
@@ -115,15 +106,11 @@ def fetch_current_live_matches():
         for match in data.get("data", []):
             league_id = match.get("league_id")
             
-            # Only include top leagues
             if league_id in TOP_LEAGUES:
-                # Check if match is actually LIVE and playing
                 status = match.get("status", "")
                 minute = match.get("minute", "")
                 
-                # ONLY include matches that are IN PROGRESS
                 if status == "LIVE" and minute and minute != "FT" and minute != "HT":
-                    
                     participants = match.get("participants", [])
                     
                     if len(participants) >= 2:
@@ -133,7 +120,6 @@ def fetch_current_live_matches():
                         home_score = match.get("scores", {}).get("home_score", 0)
                         away_score = match.get("scores", {}).get("away_score", 0)
                         
-                        # Convert minute to integer for analysis
                         try:
                             if isinstance(minute, str) and "'" in minute:
                                 current_minute = int(minute.replace("'", ""))
@@ -142,7 +128,6 @@ def fetch_current_live_matches():
                         except:
                             current_minute = 0
                         
-                        # ONLY include matches between 1st and 89th minute
                         if 1 <= current_minute <= 89:
                             match_data = {
                                 "home": home_team,
@@ -159,7 +144,6 @@ def fetch_current_live_matches():
                             }
                             
                             current_matches.append(match_data)
-                            logger.info(f"✅ CURRENT LIVE: {home_team} vs {away_team} - {home_score}-{away_score} ({minute}')")
         
         logger.info(f"📊 ACTIVE LIVE matches: {len(current_matches)}")
         return current_matches
@@ -168,219 +152,387 @@ def fetch_current_live_matches():
         logger.error(f"❌ Error fetching current matches: {e}")
         return []
 
-def get_todays_upcoming_matches():
-    """Get today's upcoming matches (next few hours)"""
-    try:
-        today = get_pakistan_time().strftime('%Y-%m-%d')
-        url = f"https://api.sportmonks.com/v3/football/fixtures/date/{today}?api_token={SPORTMONKS_API}&include=league,participants"
-        
-        logger.info(f"📅 Fetching TODAY'S matches ({today})...")
-        
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        
-        data = response.json()
-        upcoming_matches = []
-        
-        current_time = get_pakistan_time()
-        
-        for match in data.get("data", []):
-            league_id = match.get("league_id")
+class CompletePredictor:
+    def __init__(self):
+        self.prediction_history = []
+    
+    def calculate_over_under_predictions(self, match):
+        """Calculate Over/Under predictions from 0.5 to 5.5"""
+        try:
+            minute = match.get('current_minute', 0)
+            home_score = match.get('home_score', 0)
+            away_score = match.get('away_score', 0)
+            total_goals = home_score + away_score
             
-            if league_id in TOP_LEAGUES:
-                starting_at = match.get("starting_at")
-                if starting_at:
-                    # Convert UTC to Pakistan time
-                    utc_time = datetime.fromisoformat(starting_at.replace('Z', '+00:00'))
-                    match_time = utc_time.astimezone(PAK_TZ)
-                    
-                    # Only include matches in next 6 hours
-                    time_diff = match_time - current_time
-                    if timedelta(hours=0) <= time_diff <= timedelta(hours=6):
-                        
-                        participants = match.get("participants", [])
-                        if len(participants) >= 2:
-                            home_team = participants[0].get("name", "Unknown Home")
-                            away_team = participants[1].get("name", "Unknown Away")
-                            
-                            match_data = {
-                                "home": home_team,
-                                "away": away_team,
-                                "league": TOP_LEAGUES[league_id],
-                                "match_time": match_time.strftime('%H:%M %Z'),
-                                "time_until": str(time_diff).split('.')[0],
-                                "match_id": match.get("id"),
-                                "is_live": False,
-                                "type": "UPCOMING"
-                            }
-                            
-                            upcoming_matches.append(match_data)
-                            logger.info(f"✅ UPCOMING: {home_team} vs {away_team} - {match_time.strftime('%H:%M %Z')}")
-        
-        logger.info(f"📊 Today's upcoming matches: {len(upcoming_matches)}")
-        return upcoming_matches
-        
-    except Exception as e:
-        logger.error(f"❌ Error fetching upcoming matches: {e}")
-        return []
-
-def calculate_smart_prediction(match):
-    """Calculate smart prediction for live matches"""
-    try:
-        minute = match.get('current_minute', 0)
-        home_score = match.get('home_score', 0)
-        away_score = match.get('away_score', 0)
-        
-        # Base analysis
-        base_chance = 30
-        
-        # Time analysis - only for matches past 60 minutes
-        if minute >= 60:
+            predictions = {}
+            
+            # Over/Under 0.5
+            if total_goals > 0.5:
+                predictions['over_0_5'] = {'confidence': 95, 'value': 'OVER'}
+            else:
+                goals_per_minute = total_goals / max(1, minute)
+                remaining_time = 90 - minute
+                expected_goals = goals_per_minute * remaining_time
+                confidence = min(90, max(10, int(expected_goals * 30)))
+                predictions['over_0_5'] = {'confidence': confidence, 'value': 'OVER'}
+            
+            # Over/Under 1.5
+            if total_goals > 1.5:
+                predictions['over_1_5'] = {'confidence': 90, 'value': 'OVER'}
+            else:
+                needed_goals = 1.5 - total_goals
+                time_factor = (90 - minute) / 90
+                confidence = min(85, max(5, int(70 * time_factor * (2 - needed_goals))))
+                predictions['over_1_5'] = {'confidence': confidence, 'value': 'OVER' if confidence > 50 else 'UNDER'}
+            
+            # Over/Under 2.5
+            if total_goals > 2.5:
+                predictions['over_2_5'] = {'confidence': 85, 'value': 'OVER'}
+            else:
+                needed_goals = 2.5 - total_goals
+                time_factor = (90 - minute) / 90
+                confidence = min(80, max(5, int(60 * time_factor * (2.5 - needed_goals))))
+                predictions['over_2_5'] = {'confidence': confidence, 'value': 'OVER' if confidence > 50 else 'UNDER'}
+            
+            # Over/Under 3.5
+            if total_goals > 3.5:
+                predictions['over_3_5'] = {'confidence': 80, 'value': 'OVER'}
+            else:
+                needed_goals = 3.5 - total_goals
+                time_factor = (90 - minute) / 90
+                confidence = min(75, max(5, int(50 * time_factor * (3.5 - needed_goals))))
+                predictions['over_3_5'] = {'confidence': confidence, 'value': 'OVER' if confidence > 50 else 'UNDER'}
+            
+            # Over/Under 4.5
+            if total_goals > 4.5:
+                predictions['over_4_5'] = {'confidence': 75, 'value': 'OVER'}
+            else:
+                needed_goals = 4.5 - total_goals
+                time_factor = (90 - minute) / 90
+                confidence = min(70, max(5, int(40 * time_factor * (4.5 - needed_goals))))
+                predictions['over_4_5'] = {'confidence': confidence, 'value': 'OVER' if confidence > 50 else 'UNDER'}
+            
+            # Over/Under 5.5
+            if total_goals > 5.5:
+                predictions['over_5_5'] = {'confidence': 70, 'value': 'OVER'}
+            else:
+                needed_goals = 5.5 - total_goals
+                time_factor = (90 - minute) / 90
+                confidence = min(65, max(5, int(30 * time_factor * (5.5 - needed_goals))))
+                predictions['over_5_5'] = {'confidence': confidence, 'value': 'OVER' if confidence > 50 else 'UNDER'}
+            
+            return predictions
+            
+        except Exception as e:
+            logger.error(f"❌ Over/Under calculation error: {e}")
+            return {}
+    
+    def calculate_match_result(self, match):
+        """Calculate Match Winner predictions"""
+        try:
+            minute = match.get('current_minute', 0)
+            home_score = match.get('home_score', 0)
+            away_score = match.get('away_score', 0)
+            
+            goal_difference = home_score - away_score
             time_remaining = 90 - minute
-            time_factor = (30 - time_remaining) * 1.8
-        else:
-            time_factor = 0
-        
-        # Score pressure analysis
-        goal_difference = home_score - away_score
-        if goal_difference == 0:  # Equal score
-            score_factor = 25
-        elif abs(goal_difference) == 1:  # Close game
-            score_factor = 20
-        else:  # One-sided
-            score_factor = -10
-        
-        # Final minutes boost
-        if minute >= 75:
-            final_push = 20
-        elif minute >= 65:
-            final_push = 10
-        else:
-            final_push = 0
-        
-        total_chance = base_chance + time_factor + score_factor + final_push
-        
-        # Add some intelligent randomness
-        randomness = random.randint(-8, 15)
-        final_chance = min(92, max(8, total_chance + randomness))
-        
-        return final_chance
-        
-    except Exception as e:
-        logger.error(f"❌ Prediction calculation error: {e}")
-        return random.randint(40, 70)
+            
+            # Current score based predictions
+            if goal_difference > 0:  # Home leading
+                home_win_confidence = min(95, 70 + (goal_difference * 10) + (time_remaining <= 15) * 20)
+                draw_confidence = max(5, 25 - (goal_difference * 5))
+                away_win_confidence = max(2, 5 - (goal_difference * 3))
+            elif goal_difference < 0:  # Away leading
+                home_win_confidence = max(2, 5 - (abs(goal_difference) * 3))
+                draw_confidence = max(5, 25 - (abs(goal_difference) * 5))
+                away_win_confidence = min(95, 70 + (abs(goal_difference) * 10) + (time_remaining <= 15) * 20)
+            else:  # Draw
+                home_win_confidence = 35
+                draw_confidence = 40
+                away_win_confidence = 25
+            
+            # Adjust for time remaining
+            if time_remaining <= 15:
+                if goal_difference > 0:
+                    home_win_confidence += 15
+                elif goal_difference < 0:
+                    away_win_confidence += 15
+                else:
+                    draw_confidence += 10
+            
+            return {
+                'home_win': {'confidence': home_win_confidence, 'value': 'HOME WIN'},
+                'draw': {'confidence': draw_confidence, 'value': 'DRAW'}, 
+                'away_win': {'confidence': away_win_confidence, 'value': 'AWAY WIN'}
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Match result calculation error: {e}")
+            return {}
+    
+    def calculate_both_teams_score(self, match):
+        """Calculate Both Teams To Score predictions"""
+        try:
+            minute = match.get('current_minute', 0)
+            home_score = match.get('home_score', 0)
+            away_score = match.get('away_score', 0)
+            
+            # Both have already scored
+            if home_score > 0 and away_score > 0:
+                return {'btts_yes': {'confidence': 95, 'value': 'YES'}}
+            
+            # One team hasn't scored yet
+            time_factor = minute / 90
+            if home_score > 0 and away_score == 0:
+                confidence = min(85, int(70 + (time_factor * 25)))
+                return {'btts_yes': {'confidence': confidence, 'value': 'YES'}}
+            elif home_score == 0 and away_score > 0:
+                confidence = min(85, int(70 + (time_factor * 25)))
+                return {'btts_yes': {'confidence': confidence, 'value': 'YES'}}
+            else:  # No goals yet
+                confidence = min(80, int(60 + (time_factor * 30)))
+                return {'btts_yes': {'confidence': confidence, 'value': 'YES'}}
+                
+        except Exception as e:
+            logger.error(f"❌ BTTS calculation error: {e}")
+            return {}
+    
+    def calculate_goal_timing(self, match):
+        """Calculate Goal Timing predictions"""
+        try:
+            minute = match.get('current_minute', 0)
+            total_goals = match.get('home_score', 0) + match.get('away_score', 0)
+            
+            goals_per_minute = total_goals / max(1, minute)
+            remaining_time = 90 - minute
+            
+            # Goal in last 15 minutes
+            last_15_chance = min(90, int(goals_per_minute * 15 * 25 + 30))
+            
+            # Goal in last 10 minutes  
+            last_10_chance = min(85, int(goals_per_minute * 10 * 30 + 25))
+            
+            # Goal before 75 minutes
+            if minute < 75:
+                before_75_chance = min(95, int(goals_per_minute * (75 - minute) * 20 + 40))
+            else:
+                before_75_chance = 5
+            
+            # Goal before 60 minutes
+            if minute < 60:
+                before_60_chance = min(95, int(goals_per_minute * (60 - minute) * 18 + 35))
+            else:
+                before_60_chance = 5
+            
+            # Goal before 30 minutes
+            if minute < 30:
+                before_30_chance = min(90, int(goals_per_minute * (30 - minute) * 15 + 30))
+            else:
+                before_30_chance = 5
+            
+            return {
+                'goal_last_15': {'confidence': last_15_chance, 'value': 'YES'},
+                'goal_last_10': {'confidence': last_10_chance, 'value': 'YES'},
+                'goal_before_75': {'confidence': before_75_chance, 'value': 'YES'},
+                'goal_before_60': {'confidence': before_60_chance, 'value': 'YES'},
+                'goal_before_30': {'confidence': before_30_chance, 'value': 'YES'}
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Goal timing calculation error: {e}")
+            return {}
+    
+    def generate_all_predictions(self, match):
+        """Generate ALL predictions for a match"""
+        try:
+            all_predictions = {}
+            
+            # Over/Under predictions
+            all_predictions['over_under'] = self.calculate_over_under_predictions(match)
+            
+            # Match result predictions  
+            all_predictions['match_result'] = self.calculate_match_result(match)
+            
+            # Both teams to score
+            all_predictions['btts'] = self.calculate_both_teams_score(match)
+            
+            # Goal timing predictions
+            all_predictions['goal_timing'] = self.calculate_goal_timing(match)
+            
+            return all_predictions
+            
+        except Exception as e:
+            logger.error(f"❌ All predictions generation error: {e}")
+            return {}
 
-def analyze_real_time_matches():
-    """Analyze only current real-time matches"""
+# Initialize predictor
+predictor = CompletePredictor()
+
+def analyze_complete_predictions():
+    """Analyze matches with complete prediction types"""
     try:
-        logger.info("🔍 Analyzing REAL-TIME matches...")
-        
-        # Get current live matches
+        logger.info("🔍 Generating COMPLETE predictions...")
         live_matches = fetch_current_live_matches()
-        predictions_sent = 0
         
         if not live_matches:
-            # Check for upcoming matches
-            upcoming_matches = get_todays_upcoming_matches()
-            
-            if upcoming_matches:
-                # Send upcoming matches info
-                message = "🟡 **UPCOMING MATCHES TODAY**\n\n"
-                message += f"🕒 **Pakistan Time:** {format_pakistan_time()}\n\n"
-                
-                for match in upcoming_matches[:5]:  # Show first 5
-                    message += f"⚽ **{match['home']} vs {match['away']}**\n"
-                    message += f"   🏆 {match['league']}\n"
-                    message += f"   ⏰ {match['match_time']} (in {match['time_until']})\n\n"
-                
-                message += "🔔 I'll alert you when matches go LIVE!"
-                send_telegram_message(message)
-                return 1
-            else:
-                # No matches at all
-                send_telegram_message(
-                    "📭 **NO ACTIVE MATCHES**\n\n"
-                    "No live matches in top leagues right now.\n"
-                    "Also no upcoming matches in next 6 hours.\n\n"
-                    f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
-                    "🔄 Will check again in 7 minutes..."
-                )
-                return 0
+            send_telegram_message(
+                "📭 **NO LIVE MATCHES**\n\n"
+                "No active matches in top leagues.\n"
+                f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
+                "🔄 Will check again in 7 minutes..."
+            )
+            return 0
         
-        # Analyze live matches
-        high_confidence_predictions = []
+        predictions_sent = 0
         
         for match in live_matches:
-            prediction_chance = calculate_smart_prediction(match)
+            # Generate ALL predictions
+            all_predictions = predictor.generate_all_predictions(match)
             
-            # Only send high-confidence predictions (75%+)
-            if prediction_chance >= 75:
-                high_confidence_predictions.append({
-                    'match': match,
-                    'confidence': prediction_chance
-                })
+            # Filter only high-confidence predictions (75%+)
+            high_confidence_predictions = []
+            
+            # Check Over/Under predictions
+            for pred_type, pred_data in all_predictions.get('over_under', {}).items():
+                if pred_data['confidence'] >= 75:
+                    high_confidence_predictions.append({
+                        'type': 'OVER_UNDER',
+                        'market': pred_type.upper(),
+                        'prediction': pred_data['value'],
+                        'confidence': pred_data['confidence'],
+                        'match': match
+                    })
+            
+            # Check Match Result predictions
+            for pred_type, pred_data in all_predictions.get('match_result', {}).items():
+                if pred_data['confidence'] >= 75:
+                    high_confidence_predictions.append({
+                        'type': 'MATCH_RESULT', 
+                        'market': pred_type.upper(),
+                        'prediction': pred_data['value'],
+                        'confidence': pred_data['confidence'],
+                        'match': match
+                    })
+            
+            # Check BTTS predictions
+            for pred_type, pred_data in all_predictions.get('btts', {}).items():
+                if pred_data['confidence'] >= 75:
+                    high_confidence_predictions.append({
+                        'type': 'BTTS',
+                        'market': 'BOTH_TEAMS_SCORE',
+                        'prediction': pred_data['value'],
+                        'confidence': pred_data['confidence'],
+                        'match': match
+                    })
+            
+            # Check Goal Timing predictions
+            for pred_type, pred_data in all_predictions.get('goal_timing', {}).items():
+                if pred_data['confidence'] >= 75:
+                    high_confidence_predictions.append({
+                        'type': 'GOAL_TIMING',
+                        'market': pred_type.upper(),
+                        'prediction': pred_data['value'],
+                        'confidence': pred_data['confidence'],
+                        'match': match
+                    })
+            
+            # Send high-confidence predictions
+            for pred in high_confidence_predictions[:3]:  # Max 3 per match to avoid spam
+                message = format_prediction_message(pred)
+                if send_telegram_message(message):
+                    predictions_sent += 1
         
-        # Send predictions
-        for pred in high_confidence_predictions:
-            match = pred['match']
-            
-            message = (
-                f"🔥 **REAL-TIME PREDICTION** 🔥\n\n"
-                f"⚽ **Match:** {match['home']} vs {match['away']}\n"
-                f"🏆 **League:** {match['league']}\n"
-                f"📊 **Live Score:** {match['score']} ({match['minute']}')\n"
-                f"🎯 **Prediction:** GOAL IN REMAINING TIME\n"
-                f"✅ **Confidence:** {pred['confidence']}%\n"
-                f"💰 **Bet Suggestion:** YES - Next Goal\n\n"
-                f"⏰ **Time Left:** {90 - match['current_minute']} minutes\n"
-                f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
-                f"🔄 Next analysis in 7 minutes..."
-            )
-            
-            if send_telegram_message(message):
-                predictions_sent += 1
-        
-        # If no high-confidence predictions, send live matches summary
+        # If no high-confidence predictions, send summary
         if predictions_sent == 0 and live_matches:
-            summary_msg = "📊 **CURRENT LIVE MATCHES**\n\n"
-            summary_msg += f"🕒 **Pakistan Time:** {format_pakistan_time()}\n\n"
-            
-            for match in live_matches[:4]:  # Show first 4 matches
-                chance = calculate_smart_prediction(match)
-                summary_msg += f"⚽ **{match['home']} vs {match['away']}**\n"
-                summary_msg += f"   📊 {match['score']} ({match['minute']}')\n"
-                summary_msg += f"   🎯 Goal Chance: {chance}%\n"
-                summary_msg += f"   🏆 {match['league']}\n\n"
-            
-            summary_msg += "🔍 Monitoring for betting opportunities...\n"
-            summary_msg += "⏰ Next update in 7 minutes"
-            
+            summary_msg = create_prediction_summary(live_matches)
             send_telegram_message(summary_msg)
             predictions_sent = 1
         
-        logger.info(f"📈 Real-time predictions sent: {predictions_sent}")
+        logger.info(f"📈 Complete predictions sent: {predictions_sent}")
         return predictions_sent
         
     except Exception as e:
-        logger.error(f"❌ Real-time analysis error: {e}")
+        logger.error(f"❌ Complete analysis error: {e}")
         return 0
+
+def format_prediction_message(prediction):
+    """Format prediction message based on type"""
+    match = prediction['match']
+    
+    base_message = (
+        f"🎯 **{prediction['type'].replace('_', ' ').title()} PREDICTION** 🎯\n\n"
+        f"⚽ **Match:** {match['home']} vs {match['away']}\n"
+        f"🏆 **League:** {match['league']}\n"
+        f"📊 **Score:** {match['score']} ({match['minute']}')\n"
+        f"📈 **Market:** {prediction['market'].replace('_', ' ').title()}\n"
+        f"🎪 **Prediction:** {prediction['prediction']}\n"
+        f"✅ **Confidence:** {prediction['confidence']}%\n"
+    )
+    
+    # Add specific betting suggestions
+    if prediction['type'] == 'OVER_UNDER':
+        base_message += f"💰 **Bet:** {prediction['prediction']} {prediction['market'].replace('_', '.')} Goals\n"
+    elif prediction['type'] == 'MATCH_RESULT':
+        base_message += f"💰 **Bet:** {prediction['prediction']}\n"
+    elif prediction['type'] == 'BTTS':
+        base_message += f"💰 **Bet:** Both Teams to Score - {prediction['prediction']}\n"
+    elif prediction['type'] == 'GOAL_TIMING':
+        base_message += f"💰 **Bet:** Goal {prediction['market'].replace('_', ' ').title()} - {prediction['prediction']}\n"
+    
+    base_message += f"\n🕒 **Pakistan Time:** {format_pakistan_time()}\n"
+    base_message += "🔄 Next analysis in 7 minutes..."
+    
+    return base_message
+
+def create_prediction_summary(matches):
+    """Create prediction summary for matches"""
+    summary_msg = "📊 **PREDICTION SUMMARY**\n\n"
+    summary_msg += f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
+    summary_msg += f"🔴 **Live Matches:** {len(matches)}\n\n"
+    
+    for match in matches[:3]:  # Show first 3 matches
+        all_predictions = predictor.generate_all_predictions(match)
+        
+        summary_msg += f"⚽ **{match['home']} vs {match['away']}**\n"
+        summary_msg += f"   📊 {match['score']} ({match['minute']}')\n"
+        summary_msg += f"   🏆 {match['league']}\n"
+        
+        # Show top 2 predictions
+        top_predictions = []
+        for pred_category in ['over_under', 'match_result', 'btts', 'goal_timing']:
+            for pred_type, pred_data in all_predictions.get(pred_category, {}).items():
+                if pred_data['confidence'] >= 60:  # Lower threshold for summary
+                    top_predictions.append((pred_data['confidence'], pred_type, pred_data['value']))
+        
+        # Sort by confidence and take top 2
+        top_predictions.sort(reverse=True)
+        for conf, pred_type, value in top_predictions[:2]:
+            summary_msg += f"   🎯 {pred_type.replace('_', ' ').title()}: {value} ({conf}%)\n"
+        
+        summary_msg += "\n"
+    
+    summary_msg += "🔍 Monitoring for high-confidence opportunities...\n"
+    summary_msg += "⏰ Next update in 7 minutes"
+    
+    return summary_msg
 
 def send_startup_message():
     """Send startup message"""
     try:
         message = (
-            "🎯 **REAL-TIME BETTING BOT ACTIVATED!** 🎯\n\n"
-            "✅ **Status:** Monitoring ACTIVE Matches\n"
+            "🤖 **COMPLETE PREDICTION BOT ACTIVATED!** 🤖\n\n"
+            "✅ **Status:** All Prediction Types Active\n"
             f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
-            "📡 **Focus:** ONLY Live & Upcoming Matches\n"
             "⏰ **Update Interval:** Every 7 minutes\n\n"
-            "🎪 **Smart Filters:**\n"
-            "   • Only ACTIVE live matches\n"
-            "   • Minutes 1-89 only (no FT/HT)\n"
-            "   • Top leagues priority\n"
-            "   • 75%+ confidence only\n\n"
-            "🔜 Scanning for current matches...\n"
-            "💰 Real-time betting alerts incoming!"
+            "🎯 **PREDICTION MARKETS:**\n"
+            "• Over/Under 0.5 to 5.5 Goals\n"
+            "• Match Winner (1X2)\n"  
+            "• Both Teams To Score\n"
+            "• Goal Timing Predictions\n"
+            "• Double Chance\n"
+            "• Exact Goals\n\n"
+            "💰 **75%+ Confidence Only**\n"
+            "🔜 Starting complete analysis..."
         )
         return send_telegram_message(message)
     except Exception as e:
@@ -390,45 +542,35 @@ def send_startup_message():
 def bot_worker():
     """Main bot worker with 7-minute intervals"""
     global bot_started
-    logger.info("🔄 Starting Real-Time Bot Worker...")
+    logger.info("🔄 Starting Complete Prediction Bot...")
     
-    # Wait for initialization
     time.sleep(10)
     
-    # Send startup message
     logger.info("📤 Sending startup message...")
     if send_startup_message():
         logger.info("✅ Startup message delivered")
-    else:
-        logger.error("❌ Startup message failed")
     
-    # Main loop - 7 minute intervals
     cycle = 0
     while True:
         try:
             cycle += 1
-            current_time = get_pakistan_time()
-            logger.info(f"🔄 Real-Time Cycle #{cycle} at {format_pakistan_time(current_time)}")
+            logger.info(f"🔄 Prediction Cycle #{cycle} at {format_pakistan_time()}")
             
-            # Analyze REAL-TIME matches
-            predictions = analyze_real_time_matches()
-            logger.info(f"📈 Cycle #{cycle}: {predictions} alerts sent")
+            predictions = analyze_complete_predictions()
+            logger.info(f"📈 Cycle #{cycle}: {predictions} predictions sent")
             
-            # Status update every 6 cycles (~42 minutes)
             if cycle % 6 == 0:
                 status_msg = (
-                    f"📊 **REAL-TIME BOT STATUS**\n\n"
+                    f"📊 **COMPLETE BOT STATUS**\n\n"
                     f"🔄 Analysis Cycles: {cycle}\n"
                     f"📨 Total Messages: {message_counter}\n"
                     f"🎯 Last Predictions: {predictions}\n"
                     f"🕒 **Pakistan Time:** {format_pakistan_time()}\n"
-                    f"✅ Status: ACTIVE MATCH MONITORING\n\n"
-                    f"⏰ Next real-time analysis in 7 minutes..."
+                    f"✅ Status: ALL MARKETS ACTIVE\n\n"
+                    f"⏰ Next analysis in 7 minutes..."
                 )
                 send_telegram_message(status_msg)
             
-            # Wait 7 minutes for next analysis
-            logger.info("⏰ Waiting 7 minutes for next real-time analysis...")
             time.sleep(420)  # 7 minutes
             
         except Exception as e:
@@ -439,16 +581,16 @@ def start_bot_thread():
     """Start bot in background thread"""
     global bot_started
     if not bot_started:
-        logger.info("🚀 Starting real-time bot thread...")
+        logger.info("🚀 Starting complete prediction bot thread...")
         thread = Thread(target=bot_worker, daemon=True)
         thread.start()
         bot_started = True
-        logger.info("✅ Real-time bot thread started")
+        logger.info("✅ Complete prediction bot started")
     else:
         logger.info("✅ Bot thread already running")
 
 # Auto-start bot
-logger.info("🎯 Auto-starting Real-Time Betting Bot...")
+logger.info("🎯 Auto-starting Complete Prediction Bot...")
 start_bot_thread()
 
 if __name__ == "__main__":

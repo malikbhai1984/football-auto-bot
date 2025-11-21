@@ -13,11 +13,11 @@ from dotenv import load_dotenv
 # -------------------------
 load_dotenv()
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID"))
-API_KEY = os.environ.get("API_KEY")
-DOMAIN = os.environ.get("DOMAIN")
-BOT_NAME = os.environ.get("BOT_NAME", "MyBetAlert_Bot")
+BOT_NAME = os.getenv("BOT_NAME", "MyBetAlert_Bot")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID", 0))
+API_KEY = os.getenv("API_KEY")
+DOMAIN = os.getenv("DOMAIN")
 PORT = int(os.environ.get("PORT", 8080))
 
 if not all([BOT_TOKEN, OWNER_CHAT_ID, API_KEY, DOMAIN]):
@@ -25,27 +25,24 @@ raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, API_KEY, or DOMAIN missing!")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(name)
-
 API_URL = "https://apiv3.apifootball.com"
 
 # -------------------------
-# Fetch live or today matches (free plan compatible)
+# Fetch live matches
 # -------------------------
 def fetch_live_matches():
 try:
-today = datetime.now().strftime('%Y-%m-%d')
-url = f"{API_URL}/?action=get_events&from={today}&to={today}&APIkey={API_KEY}"
+url = f"{API_URL}/?action=get_events&APIkey={API_KEY}&from={datetime.now().strftime('%Y-%m-%d')}&to={datetime.now().strftime('%Y-%m-%d')}"
 resp = requests.get(url, timeout=10)
 if resp.status_code == 200:
 data = resp.json()
-# Free plan me match_live may not work, so we just return today's matches
-matches = [m for m in data if m.get("match_hometeam_name")]
-return matches
+live_matches = [m for m in data if m.get("match_live") == "1"]
+return live_matches
 else:
-print(f"❌ API Error: {resp.status_code} {resp.text}")
+print(f"❌ API Error: {resp.status_code}")
 return []
 except Exception as e:
-print(f"❌ Fetch error: {e}")
+print(f"❌ Live fetch error: {e}")
 return []
 
 # -------------------------
@@ -87,9 +84,6 @@ return {
 "goal_minutes": goal_minutes
 }
 
-# -------------------------
-# Generate message
-# -------------------------
 def generate_prediction(match):
 home = match.get("match_hometeam_name")
 away = match.get("match_awayteam_name")
@@ -125,7 +119,7 @@ time.sleep(2)
 except Exception as e:
 print(f"❌ Send message error: {e}")
 else:
-print("⏳ No matches currently.")
+print("⏳ No live matches currently.")
 except Exception as e:
 print(f"❌ Auto-update error: {e}")
 time.sleep(300)  # every 5 minutes
@@ -133,9 +127,9 @@ time.sleep(300)  # every 5 minutes
 # -------------------------
 # Telegram commands
 # -------------------------
-@bot.message_handler(commands=['start','help'])
+@bot.message_handler(commands=['start', 'help'])
 def send_help(message):
-bot.reply_to(message, f"🤖 {BOT_NAME} monitoring today's matches. Use /predict to get predictions.")
+bot.reply_to(message, f"🤖 {BOT_NAME} monitoring live matches. Use /predict to get predictions.")
 
 @bot.message_handler(commands=['predict'])
 def send_predictions(message):
@@ -144,14 +138,14 @@ if matches:
 msg = generate_prediction(matches[0])
 bot.reply_to(message, msg)
 else:
-bot.reply_to(message, "⏳ No matches currently.")
+bot.reply_to(message, "⏳ No live matches currently.")
 
 # -------------------------
 # Flask webhook
 # -------------------------
 @app.route('/')
 def home():
-return f"{BOT_NAME} Running!"
+return "Football Bot Running!"
 
 @app.route(f'/{BOT_TOKEN}', methods=['POST'])
 def webhook():
@@ -164,10 +158,9 @@ print(f"❌ Webhook error: {e}")
 return 'ERROR', 400
 
 # -------------------------
-# Setup bot + webhook
+# Bot setup
 # -------------------------
 def setup_bot():
-try:
 bot.remove_webhook()
 time.sleep(1)
 bot.set_webhook(url=f"{DOMAIN}/{BOT_TOKEN}")
@@ -177,14 +170,13 @@ t = threading.Thread(target=auto_update, daemon=True)
 t.start()
 print("✅ Auto-update started!")
 
-bot.send_message(OWNER_CHAT_ID, f"🤖 {BOT_NAME} Started! Monitoring today's matches every 5 minutes.")
-except Exception as e:
-print(f"❌ Bot setup error: {e}")
-bot.polling(none_stop=True)
+bot.send_message(OWNER_CHAT_ID, f"🤖 {BOT_NAME} Started! Monitoring live matches every 5 minutes.")
+print("✅ Test message sent successfully!")
 
 # -------------------------
 # Run
 # -------------------------
-if name == 'main':
 setup_bot()
-app.run(host='0.0.0.0', port=PORT)
+
+if name == "main":
+app.run(host="0.0.0.0", port=PORT)

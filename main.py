@@ -1,117 +1,113 @@
 import os
 import requests
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
+import telebot
 from dotenv import load_dotenv
-from telegram import Bot
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
-import joblib
-import time
+from datetime import datetime
 
-# -------------------------
+# ----------------------
 # Load environment variables
-# -------------------------
+# ----------------------
 load_dotenv()
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
+OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID"))
 SPORTMONKS_API = os.getenv("SPORTMONKS_API")
-APIFOOTBALL_API = os.getenv("API_KEY")  # API-Football
+APIFOOTBALL_API = os.getenv("API_KEY")  # optional second API
+BOT_NAME = os.getenv("BOT_NAME")
 DOMAIN = os.getenv("DOMAIN")
 PORT = int(os.getenv("PORT", 8080))
 
-if not all([BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, DOMAIN]):
+if not all([BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, DOMAIN]):
     raise ValueError("❌ BOT_TOKEN, OWNER_CHAT_ID, SPORTMONKS_API, APIFOOTBALL_API, or DOMAIN missing!")
 
-bot = Bot(token=BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# -------------------------
-# Load ML model
-# -------------------------
-MODEL_FILE = "goal_predictor.pkl"
+# ----------------------
+# Top Leagues & Qualifiers
+# ----------------------
+TOP_LEAGUES = {
+    "Premier League": 39,
+    "La Liga": 140,
+    "Serie A": 135,
+    "Bundesliga": 78,
+    "Ligue 1": 61,
+    "Eredivisie": 88,
+    "Primeira Liga": 94,
+    "Russian Premier League": 293
+}
 
-if os.path.exists(MODEL_FILE):
-    model = joblib.load(MODEL_FILE)
-    scaler = joblib.load("scaler.pkl")
-else:
-    # Dummy model if not exists (replace with real training)
-    model = RandomForestClassifier()
-    scaler = StandardScaler()
+QUALIFIERS = {
+    "World Cup Qualifiers": 73,
+    "Euro Qualifiers": 74
+}
 
-# -------------------------
-# Top leagues + qualifiers IDs
-# -------------------------
-TOP_LEAGUES = [39, 140, 78, 61, 71, 135, 109, 102]  # Example: EPL, La Liga, Serie A...
-QUALIFIERS = [999, 1000, 1001]  # Example IDs, replace with actual qualifiers
-
-# -------------------------
-# Helper Functions
-# -------------------------
+# ----------------------
+# Fetch Live Matches
+# ----------------------
 def fetch_live_matches():
-    """Fetch live matches from SportMonks API filtered by leagues"""
-    url = f"https://soccer.sportmonks.com/api/v2.0/livescores?api_token={SPORTMONKS_API}"
-    response = requests.get(url)
-    data = response.json()
-    live_matches = []
-
-    for match in data.get("data", []):
-        league_id = match["league_id"]
-        if league_id in TOP_LEAGUES + QUALIFIERS:
-            live_matches.append({
-                "match_id": match["id"],
-                "league": match["league"]["name"],
-                "home_team": match["localTeam"]["name"],
-                "away_team": match["visitorTeam"]["name"],
-                "score": f"{match['scores']['localteam_score']} - {match['scores']['visitorteam_score']}",
-                "minute": match["time"]["minute"]
+    url = f"https://soccer.sportmonks.com/api/v2.0/fixtures/live?api_token={SPORTMONKS_API}&include=localTeam,visitorTeam,league"
+    res = requests.get(url).json()
+    all_matches = res.get("data", [])
+    
+    filtered_matches = []
+    for m in all_matches:
+        league_id = m.get("league", {}).get("data", {}).get("id")
+        if league_id in list(TOP_LEAGUES.values()) + list(QUALIFIERS.values()):
+            filtered_matches.append({
+                "match_id": m["id"],
+                "home": m.get("localTeam", {}).get("data", {}).get("name", "Home"),
+                "away": m.get("visitorTeam", {}).get("data", {}).get("name", "Away"),
+                "league": m.get("league", {}).get("data", {}).get("name", "League"),
+                "minute": m.get("time", {}).get("minute", 0),
+                "score": f"{m.get('scores', {}).get('localteam_score', 0)} - {m.get('scores', {}).get('visitorteam_score', 0)}"
             })
-    return live_matches
+    return filtered_matches
 
-def predict_goal(match_features):
-    """Predict goal probability using ML model"""
-    features_scaled = scaler.transform([match_features])
-    prob = model.predict_proba(features_scaled)[0][1] * 100
-    return prob
+# ----------------------
+# Simple ML/AI Prediction Stub
+# Replace this with your real model
+# ----------------------
+def predict_goal_chance(match):
+    """
+    Return probability of goal in last 10 minutes.
+    Currently random stub, replace with your ML/AI logic.
+    """
+    import random
+    return random.randint(50, 100)
 
-def send_telegram_alert(match, probability):
-    """Send Telegram message"""
-    message = (
-        f"🔥 GOAL ALERT 🔥\n"
-        f"League: {match['league']}\n"
-        f"{match['home_team']} vs {match['away_team']}\n"
-        f"Score: {match['score']} | Minute: {match['minute']}\n"
-        f"Probability next 10 min: {probability:.1f}%"
-    )
-    bot.send_message(chat_id=OWNER_CHAT_ID, text=message)
+# ----------------------
+# Send Telegram Alert
+# ----------------------
+def send_alert(match, prob):
+    if prob >= 80:  # threshold
+        message = (
+            f"🔥 GOAL ALERT 🔥\n"
+            f"League: {match['league']}\n"
+            f"Match: {match['home']} vs {match['away']}\n"
+            f"Score: {match['score']}\n"
+            f"Minute: {match['minute']}'\n"
+            f"Goal Chance: {prob}%"
+        )
+        bot.send_message(OWNER_CHAT_ID, message)
 
-# -------------------------
+# ----------------------
 # Main Loop
-# -------------------------
+# ----------------------
 def main():
-    print("✅ Live match alert bot started!")
     while True:
         try:
             live_matches = fetch_live_matches()
             for match in live_matches:
-                # Example: match features for ML model (replace with actual live stats)
-                match_features = [
-                    np.random.randint(0,3),  # home_score
-                    np.random.randint(0,3),  # away_score
-                    np.random.rand(),        # home_xG
-                    np.random.rand(),        # away_xG
-                    np.random.rand(),        # shots_diff
-                    np.random.rand(),        # possession_diff
-                    np.random.rand(),        # h2h_avg_goals
-                    match["minute"]
-                ]
-
-                prob = predict_goal(match_features)
-                if prob >= 80:
-                    send_telegram_alert(match, prob)
+                prob = predict_goal_chance(match)
+                send_alert(match, prob)
         except Exception as e:
             print("Error:", e)
-        time.sleep(60)  # 1 minute delay
+        import time
+        time.sleep(60)  # check every 60 seconds
 
+# ----------------------
+# Run bot
+# ----------------------
 if __name__ == "__main__":
+    print("✅ Bot started. Fetching live matches...")
     main()

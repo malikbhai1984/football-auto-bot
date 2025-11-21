@@ -10,7 +10,7 @@ gunicorn
 
 pandas
 numpy
-
+scikit-lear
 
 
 

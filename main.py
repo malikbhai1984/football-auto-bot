@@ -315,3 +315,289 @@ def get_match_state(minute, goal_difference):
         return "Mid-Late Game"
     else:
         return "First Half - Developing"
+        
+def fetch_historical_data():
+    """Fetch historical data for ML training"""
+    try:
+        logger.info("📊 Fetching historical data...")
+        
+        # Peter McLagan data
+        base_url = "https://raw.githubusercontent.com/petermclagan/footballAPI/main/data/"
+        datasets = {
+            'premier_league': 'premier_league.csv',
+            'la_liga': 'la_liga.csv',
+        }
+        
+        historical_matches = []
+        
+        for league, filename in datasets.items():
+            try:
+                url = base_url + filename
+                response = requests.get(url, timeout=15)
+                
+                if response.status_code == 200:
+                    csv_data = io.StringIO(response.text)
+                    df = pd.read_csv(csv_data)
+                    
+                    for _, row in df.iterrows():
+                        match_data = {
+                            'league': league.replace('_', ' ').title(),
+                            'home_team': clean_team_name(row.get('HomeTeam', '')),
+                            'away_team': clean_team_name(row.get('AwayTeam', '')),
+                            'home_goals': row.get('FTHG', 0),
+                            'away_goals': row.get('FTAG', 0),
+                            'result': row.get('FTR', ''),
+                            'source': 'historical'
+                        }
+                        historical_matches.append(match_data)
+                    
+                    logger.info(f"✅ Loaded {len(df)} matches from {league}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error loading {league}: {e}")
+                continue
+        
+        logger.info(f"📈 Total historical matches: {len(historical_matches)}")
+        return historical_matches
+        
+    except Exception as e:
+        logger.error(f"❌ Historical data error: {e}")
+        return []
+
+def clean_team_name(team_name):
+    """Clean team name for consistency"""
+    if not team_name:
+        return ""
+    clean_name = str(team_name).strip()
+    clean_name = re.sub(r'FC$|CF$|AFC$|CFC$', '', clean_name).strip()
+    return clean_name
+
+def train_ml_model():
+    """Train ML model on historical data"""
+    global model, scaler
+    
+    try:
+        historical_matches = fetch_historical_data()
+        
+        if len(historical_matches) < 50:
+            logger.warning("⚠️ Not enough historical data for ML training")
+            return False
+        
+        features = []
+        labels = []
+        
+        for match in historical_matches:
+            try:
+                home_goals = match.get('home_goals', 0)
+                away_goals = match.get('away_goals', 0)
+                
+                # Determine result
+                result = match.get('result', '')
+                if result == 'H':
+                    label = 0  # Home win
+                elif result == 'A':
+                    label = 1  # Away win
+                else:
+                    label = 2  # Draw
+                
+                # Feature vector
+                feature = [
+                    home_goals, away_goals, 
+                    home_goals + away_goals,  # total goals
+                    home_goals - away_goals,  # goal difference
+                    random.uniform(0.9, 1.1)   # randomness
+                ]
+                
+                features.append(feature)
+                labels.append(label)
+                
+            except Exception as e:
+                continue
+        
+        if len(features) < 30:
+            return False
+        
+        # Train model
+        features_scaled = scaler.fit_transform(features)
+        
+        model = GradientBoostingClassifier(
+            n_estimators=50,
+            learning_rate=0.1,
+            max_depth=3,
+            random_state=42
+        )
+        model.fit(features_scaled, labels)
+        
+        logger.info(f"✅ ML Model trained on {len(features)} matches")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ ML training error: {e}")
+        return False
+
+@app.route("/")
+def home():
+    """Home page"""
+    return """
+    <html>
+        <head>
+            <title>Live Match Prediction Bot</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 40px; }
+                .status { padding: 20px; background: #f0f0f0; border-radius: 10px; }
+            </style>
+        </head>
+        <body>
+            <h1>⚽ Live Match Prediction Bot</h1>
+            <div class="status">
+                <p><strong>Status:</strong> 🟢 Running</p>
+                <p><strong>Started:</strong> {}</p>
+                <p><strong>Messages Sent:</strong> {}</p>
+                <p><a href="/health">Health Check</a> | <a href="/live-matches">Live Matches</a></p>
+            </div>
+        </body>
+    </html>
+    """.format(format_pakistan_time(), message_counter)
+
+@app.route("/health")
+def health():
+    """Health check endpoint"""
+    status = {
+        "status": "healthy",
+        "timestamp": format_pakistan_time(),
+        "bot_started": bot_started,
+        "messages_sent": message_counter,
+        "sportmonks_api": "available" if SPORTMONKS_API else "missing"
+    }
+    return json.dumps(status, indent=2)
+
+@app.route("/live-matches")
+def live_matches():
+    """Check current live matches"""
+    try:
+        all_matches = fetch_all_live_matches()
+        filtered_matches = filter_live_matches(all_matches)
+        
+        result = {
+            "timestamp": format_pakistan_time(),
+            "total_matches": len(all_matches),
+            "live_matches": len(filtered_matches),
+            "matches": filtered_matches
+        }
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+def send_startup_message():
+    """Send startup message"""
+    startup_msg = f"""🚀 **Live Match Prediction Bot Started!**
+
+⏰ **Startup Time:** {format_pakistan_time()}
+📊 **API Status:** ✅ Connected
+🎯 **Settings:**
+   • Check Interval: {Config.BOT_CYCLE_INTERVAL} seconds
+   • Min Confidence: {Config.MIN_CONFIDENCE_THRESHOLD}%
+   • Minute Range: 35+ minutes
+
+🤖 **Features:**
+   • Real-time match monitoring
+   • Smart prediction algorithm  
+   • Multiple data sources
+   • Automatic updates
+
+Bot is now actively scanning for live matches!"""
+    
+    send_telegram_message(startup_msg)
+
+def bot_worker():
+    """Main bot worker function"""
+    global bot_started
+    logger.info("🔄 Starting Bot Worker...")
+    
+    bot_started = True
+    
+    # Train ML model in background
+    Thread(target=train_ml_model, daemon=True).start()
+    
+    # Send startup message
+    time.sleep(2)
+    send_startup_message()
+    
+    cycle = 0
+    last_prediction_time = None
+    
+    while True:
+        try:
+            cycle += 1
+            current_time = format_pakistan_time()
+            logger.info(f"🔄 Cycle #{cycle} at {current_time}")
+            
+            # Fetch all matches
+            all_matches = fetch_all_live_matches()
+            live_matches = filter_live_matches(all_matches)
+            
+            logger.info(f"📊 Found {len(live_matches)} live matches")
+            
+            predictions_sent = 0
+            
+            # Analyze each match
+            for match in live_matches:
+                try:
+                    # Make prediction
+                    prediction = analyze_match_prediction(match)
+                    
+                    # Send message if confidence is high enough
+                    if prediction['confidence'] >= Config.MIN_CONFIDENCE_THRESHOLD:
+                        message = format_prediction_message(match, prediction)
+                        
+                        if send_telegram_message(message):
+                            predictions_sent += 1
+                            last_prediction_time = current_time
+                            logger.info(f"✅ Prediction sent: {match['home']} vs {match['away']} - {prediction['confidence']}%")
+                        
+                        # Wait between messages
+                        time.sleep(2)
+                    else:
+                        logger.info(f"📊 Low confidence: {match['home']} vs {match['away']} - {prediction['confidence']}%")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Match analysis error: {e}")
+                    continue
+            
+            # Log summary
+            if predictions_sent > 0:
+                logger.info(f"🎯 Cycle #{cycle}: {predictions_sent} predictions sent")
+            else:
+                logger.info(f"😴 Cycle #{cycle}: No high-confidence predictions")
+            
+            # Wait for next cycle
+            logger.info(f"⏰ Waiting {Config.BOT_CYCLE_INTERVAL} seconds...")
+            time.sleep(Config.BOT_CYCLE_INTERVAL)
+            
+        except Exception as e:
+            logger.error(f"❌ Bot worker error: {e}")
+            time.sleep(Config.BOT_CYCLE_INTERVAL)
+
+def start_bot():
+    """Start the bot"""
+    try:
+        bot_thread = Thread(target=bot_worker, daemon=True)
+        bot_thread.start()
+        logger.info("🤖 Bot started successfully")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to start bot: {e}")
+        return False
+
+# Auto-start bot
+logger.info("🎯 Auto-starting Live Match Prediction Bot...")
+if start_bot():
+    logger.info("✅ Bot auto-started successfully")
+else:
+    logger.error("❌ Bot auto-start failed")
+
+if __name__ == "__main__":
+    logger.info("🌐 Starting Flask server...")
+    port = int(os.environ.get("PORT", 8080))
+    logger.info(f"🔌 Running on port {port}")
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -7,7 +7,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import pytz
-import joblib  # for loading ML model
+import joblib
+from urllib.error import HTTPError
 
 # ------------------------
 # Load environment variables
@@ -27,27 +28,34 @@ app = Flask(__name__)
 # ------------------------
 # Config: leagues & qualifiers
 # ------------------------
-TOP_LEAGUES_IDS = [
-    39, 140, 135, 78, 61, 88, 94, 129, 53, 79  # Premier, La Liga, Serie A, Bundesliga, Ligue1, Eredivisie, Primeira, Russia, Belgium, Turkey
-]
-WC_QUALIFIERS_IDS = [
-    215, 216, 217, 218, 219  # Example: UEFA, CONMEBOL, CAF, AFC, CONCACAF qualifier league IDs
-]
+TOP_LEAGUES_IDS = [39,140,135,78,61,88,94,129,53,79]  # Premier, La Liga, Serie A...
+WC_QUALIFIERS_IDS = [215,216,217,218,219]
 
 # ------------------------
-# Load historical / ML models
+# Load historical/H2H data safely
 # ------------------------
-historical_df = pd.read_csv(
-    "https://raw.githubusercontent.com/petermclagan/footballAPI/main/data/football_data.csv"
-)
-
-# Example: load pre-trained ML models
 try:
-    winner_model = joblib.load("models/winner_xgb_model.pkl")
-    ou_model = joblib.load("models/over_under_xgb_model.pkl")
-    btts_model = joblib.load("models/btts_xgb_model.pkl")
-except:
-    winner_model, ou_model, btts_model = None, None, None
+    historical_df = pd.read_csv(
+        "https://raw.githubusercontent.com/petermclagan/footballAPI/main/data/football_data.csv"
+    )
+except HTTPError as e:
+    print("Historical data 404 error:", e)
+    historical_df = pd.DataFrame()
+
+# ------------------------
+# Load pre-trained ML models safely
+# ------------------------
+def load_model(path):
+    try:
+        return joblib.load(path)
+    except:
+        print(f"Model {path} not found, skipping...")
+        return None
+
+winner_model = load_model("models/winner_xgb_model.pkl")
+ou_model = load_model("models/over_under_xgb_model.pkl")
+btts_model = load_model("models/btts_xgb_model.pkl")
+last10_model = load_model("models/last10_xgb_model.pkl")
 
 # ------------------------
 # Fetch live matches
@@ -58,20 +66,24 @@ def fetch_live_matches():
         "X-RapidAPI-Key": API_KEY,
         "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
     }
-    response = requests.get(url, headers=headers)
-    data = response.json()
-    matches = data.get("response", [])
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        matches = response.json().get("response", [])
+    except Exception as e:
+        print("Live matches fetch error:", e)
+        matches = []
 
-    # Filter only Top Leagues + WC Qualifiers
-    filtered_matches = []
+    # Filter Top Leagues + WC Qualifiers
+    filtered = []
     for m in matches:
         league_id = m['league']['id']
         if league_id in TOP_LEAGUES_IDS + WC_QUALIFIERS_IDS:
-            filtered_matches.append(m)
-    return filtered_matches
+            filtered.append(m)
+    return filtered
 
 # ------------------------
-# Calculate predictions
+# ML Prediction function
 # ------------------------
 def calculate_predictions(match, historical_df):
     predictions = {
@@ -85,30 +97,57 @@ def calculate_predictions(match, historical_df):
     }
 
     # ------------------------
-    # Example: integrate ML model logic here
+    # Prepare feature vector from historical + H2H data
     # ------------------------
-    # Replace these with real ML predictions
-    predictions['winner'] = np.random.choice(["Home", "Away", "Draw"])
-    predictions['btts'] = np.random.choice(["Yes", "No"])
-    
-    for line in [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]:
-        predictions['over_under'][line] = np.random.randint(70, 95)  # dummy confidence %
-
-    predictions['goal_minutes']['home'] = [12, 34, 57, 82]
-    predictions['goal_minutes']['away'] = [22, 49, 78, 88]
-
-    # Last 10-minute goals (80-90 min)
-    predictions['last_10_min_goal']['home'] = np.random.randint(70, 95)
-    predictions['last_10_min_goal']['away'] = np.random.randint(70, 95)
+    # Example: just placeholders. Replace with your real features
+    features = pd.DataFrame([{
+        "home_team_id": match['teams']['home']['id'],
+        "away_team_id": match['teams']['away']['id'],
+        "home_team_rank": 1,  # from historical_df
+        "away_team_rank": 2,
+        "home_form": 80,      # last 5 games
+        "away_form": 75
+    }])
 
     # ------------------------
-    # Filter only >=85% confidence
+    # Winner Prediction
     # ------------------------
-    predictions['over_under'] = {k:v for k,v in predictions['over_under'].items() if v >= 85}
-    if predictions['winner'] not in ["Home", "Away", "Draw"]:
-        predictions['winner'] = None
-    if predictions['btts'] not in ["Yes", "No"]:
-        predictions['btts'] = None
+    if winner_model is not None:
+        proba = winner_model.predict_proba(features)  # e.g., columns = [Home, Draw, Away]
+        winner_index = np.argmax(proba)
+        if proba[0][winner_index] >= 0.85:  # only ≥85%
+            predictions['winner'] = ["Home","Draw","Away"][winner_index]
+
+    # ------------------------
+    # BTTS Prediction
+    # ------------------------
+    if btts_model is not None:
+        btts_proba = btts_model.predict_proba(features)  # columns = [No, Yes]
+        if btts_proba[0][1] >= 0.85:
+            predictions['btts'] = "Yes"
+        elif btts_proba[0][0] >= 0.85:
+            predictions['btts'] = "No"
+
+    # ------------------------
+    # Over/Under 0.5–5.5 Goals
+    # ------------------------
+    if ou_model is not None:
+        for line in [0.5,1.5,2.5,3.5,4.5,5.5]:
+            ou_proba = ou_model.predict_proba(features.assign(line=line))  # columns = [Under, Over]
+            if ou_proba[0][1] >= 0.85:
+                predictions['over_under'][line] = int(ou_proba[0][1]*100)
+
+    # ------------------------
+    # Goal minutes & last 10-min prediction
+    # ------------------------
+    # Just a placeholder: replace with actual ML logic on minute-level data
+    predictions['goal_minutes']['home'] = [10,34,57,82]
+    predictions['goal_minutes']['away'] = [22,49,78,88]
+    if last10_model is not None:
+        last10_home = last10_model.predict_proba(features)[0][1]
+        last10_away = last10_model.predict_proba(features)[0][1]
+        predictions['last_10_min_goal']['home'] = int(last10_home*100)
+        predictions['last_10_min_goal']['away'] = int(last10_away*100)
 
     return predictions
 
@@ -149,7 +188,6 @@ def live_predictions(message):
     if not live_matches:
         bot.send_message(message.chat.id, "No live matches found.")
         return
-
     for match in live_matches:
         pred = calculate_predictions(match, historical_df)
         if pred['over_under'] or pred['winner'] or pred['btts']:

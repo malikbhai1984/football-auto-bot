@@ -13,7 +13,7 @@ from threading import Thread
 # --------------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
-API_KEY = os.environ.get("API_KEY")
+API_KEY = os.environ.get("API_KEY")            # API-Football
 SPORTMONKS_API = os.environ.get("SPORTMONKS_API")
 PORT = int(os.environ.get("PORT", 8080))
 BOT_NAME = os.environ.get("BOT_NAME", "MyBetAlert_Bot")
@@ -27,7 +27,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # URLs and Config
 # --------------------
 PREVIOUS_DATA_URL = "https://raw.githubusercontent.com/<your_username>/<repo>/main/matches.csv"
-LIVE_MATCHES_URL = f"https://api.sportmonks.com/v3/football/livescores?api_token={SPORTMONKS_API}"
 
 TOP_LEAGUES_IDS = [
     39, 140, 78, 61, 135, 64, 71, 2  # EPL, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira, Russian League
@@ -47,8 +46,34 @@ def fetch_previous_matches():
         return pd.DataFrame()
 
 def fetch_live_matches():
+    """
+    First try API-Football. If fails, fallback to SportMonks.
+    """
+    # --------- API-Football ----------
     try:
-        r = requests.get(LIVE_MATCHES_URL)
+        headers = {"x-rapidapi-key": API_KEY}
+        url = "https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all"
+        response = requests.get(url, headers=headers, timeout=10)
+        data = response.json().get('response', [])
+        live_matches = []
+        for match in data:
+            league_id = match['league']['id']
+            if league_id in TOP_LEAGUES_IDS or match['league']['type'] == 'WCQ':
+                live_matches.append({
+                    'home_team': match['teams']['home'],
+                    'away_team': match['teams']['away'],
+                    'league': match['league'],
+                    'time': {'minute': match['fixture']['status']['elapsed'] or 0}
+                })
+        if live_matches:
+            return live_matches
+    except Exception as e:
+        print(f"⚠️ API-Football failed: {e}")
+
+    # --------- SportMonks Fallback ----------
+    try:
+        url = f"https://api.sportmonks.com/v3/football/livescores?api_token={SPORTMONKS_API}"
+        r = requests.get(url, timeout=10)
         data = r.json()
         live_matches = []
         for match in data.get('data', []):
@@ -57,13 +82,13 @@ def fetch_live_matches():
                 live_matches.append(match)
         return live_matches
     except Exception as e:
-        print(f"❌ Failed to fetch live matches: {e}")
+        print(f"⚠️ SportMonks failed: {e}")
         return []
 
 def calculate_predictions(match):
     """
-    Dummy prediction logic based on historical stats + live data.
-    Replace with your advanced AI/ML logic later.
+    Dummy prediction logic for now.
+    Replace with advanced AI/ML logic using H2H, corners, previous stats.
     """
     over_prob = np.random.uniform(40, 70)
     btts_prob = np.random.uniform(50, 85)

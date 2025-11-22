@@ -4,7 +4,7 @@ import requests
 import telebot
 from flask import Flask
 from threading import Thread
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 import pandas as pd
 import numpy as np
@@ -21,9 +21,12 @@ logger = logging.getLogger()
 # -----------------------------
 # Load environment variables
 # -----------------------------
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
-SPORTMONKS_API = os.getenv("API_KEY", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
+API_KEY = os.getenv("API_KEY")
+SPORTMONKS_API = os.getenv("SPORTMONKS_API")
+BOT_NAME = os.getenv("BOT_NAME", "MyBetAlert_Bot")
+DOMAIN = os.getenv("DOMAIN", "http://localhost")
 PORT = int(os.getenv("PORT", 8080))
 
 try:
@@ -186,7 +189,7 @@ def compute_team_stats(team, historical):
     }
 
 def predict_goals(home_stats, away_stats, current_score, line):
-    total_goals = sum(current_score)
+    total_goals = sum(current_score[:2])
     minutes_left = 90-current_score[2]
     expected_goals = (home_stats['avg_goals_for'] + away_stats['avg_goals_for']) * minutes_left/90
     total_expected = total_goals + expected_goals
@@ -230,7 +233,7 @@ def analyze_and_send():
                 for line in [0.5,1.5,2.5,3.5,4.5,5.5]:
                     msg+=f"• Goals {line}: {predict_goals(home_stats, away_stats, cs, line)}\n"
                 msg+=f"⏰ Last 10 min goal chance: {'High' if m['minute']>=80 else 'Low'}\n"
-                msg+=f"🕐 Time: {get_time()}"
+                msg+=f"🕐 Time: {get_time()}\n"
                 send_telegram(msg)
                 time.sleep(1)
             logger.info("✅ Cycle complete. Waiting 7 minutes...")
@@ -244,7 +247,7 @@ def analyze_and_send():
 # -----------------------------
 @app.route("/")
 def index():
-    return "ULTRA 85%+ Bot Running", 200
+    return f"{BOT_NAME} ✅ Running at {DOMAIN}", 200
 
 # -----------------------------
 # Start background thread
@@ -255,5 +258,5 @@ Thread(target=analyze_and_send, daemon=True).start()
 # Run Flask
 # -----------------------------
 if __name__=="__main__":
-    logger.info("🚀 Starting Flask server...")
+    logger.info(f"🚀 Starting {BOT_NAME} Flask server...")
     app.run(host="0.0.0.0", port=PORT)

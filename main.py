@@ -1,6 +1,4 @@
-main.py
 
-Complete working template with ML integration placeholders
 
 import os import requests import time import logging import json import pandas as pd from datetime import datetime from flask import Flask, request from dotenv import load_dotenv
 

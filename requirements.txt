@@ -9,6 +9,7 @@ pytz
 scikit-learn
 numpy
 pandas
+xgboost
 
 
 

@@ -1,126 +1,135 @@
 import os
 import requests
-import telebot
 import time
 import pandas as pd
 import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
-from threading import Thread
-from flask import Flask
+import telebot
 
-# ---------------- ENV VARIABLES ----------------
+# -----------------------
+# Load environment
+# -----------------------
 load_dotenv()
+
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID"))
-API_KEY = os.environ.get("API_KEY")
-SPORTMONKS_API = os.environ.get("SPORTMONKS_API")
+OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
+API_FOOTBALL_KEY = os.environ.get("API_KEY")         # API-Football
+SPORTMONKS_KEY = os.environ.get("SPORTMONKS_API")    # SportMonks fallback
 BOT_NAME = os.environ.get("BOT_NAME", "MyBetAlert_Bot")
-PORT = int(os.environ.get("PORT", 8080))
 
-# ----------- Top Leagues & WCQ IDs -------------
-TOP_LEAGUES_IDS = [39, 140, 78, 61, 135, 2, 3, 8]
-
-# -------- TELEGRAM BOT INIT -------------------
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# -------- FETCH LIVE MATCHES ------------------
-def fetch_live_matches():
-    # API-Football
-    try:
-        headers = {"x-rapidapi-key": API_KEY, "x-rapidapi-host": "api-football-v1.p.rapidapi.com"}
-        url = "https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all"
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json().get('response', [])
-        live_matches = []
-        for match in data:
-            league_id = match['league']['id']
-            if league_id in TOP_LEAGUES_IDS or match['league']['type'] == 'WCQ':
-                live_matches.append({
-                    'home_team': match['teams']['home']['name'],
-                    'away_team': match['teams']['away']['name'],
-                    'league': match['league']['name'],
-                    'minute': match['fixture']['status'].get('elapsed', 0)
-                })
-        if live_matches:
-            return live_matches
-    except Exception as e:
-        print(f"⚠️ API-Football failed: {e}")
-
-    # SportMonks Fallback
-    try:
-        url = f"https://api.sportmonks.com/v3/football/livescores?api_token={SPORTMONKS_API}"
-        r = requests.get(url, timeout=10)
-        data = r.json()
-        live_matches = []
-        for match in data.get('data', []):
-            league_id = match.get('league_id')
-            if league_id in TOP_LEAGUES_IDS or match.get('competition', {}).get('type') == 'WCQ':
-                live_matches.append({
-                    'home_team': match.get('localTeam', {}).get('data', {}).get('name', 'None'),
-                    'away_team': match.get('visitorTeam', {}).get('data', {}).get('name', 'None'),
-                    'league': match.get('league', {}).get('data', {}).get('name', 'Unknown League'),
-                    'minute': match.get('time', {}).get('minute', 0)
-                })
-        if live_matches:
-            return live_matches
-    except Exception as e:
-        print(f"⚠️ SportMonks failed: {e}")
-
-    return []
-
-# -------- PREDICTION LOGIC -------------------
-def predict_match(match):
-    over_prob = np.random.uniform(0.4, 0.9)
-    btts_prob = np.random.uniform(0.3, 0.8)
-    last10_prob = np.random.uniform(0.1, 0.3)
-    correct_scores = [(1,1),(1,0)]
+# -----------------------
+# Prediction placeholders
+# Replace with your Pandas/Numpy logic
+# -----------------------
+def predict_match(match_data):
+    """
+    Input: match_data dict with H2H, corners, score, minute
+    Output: dict with predictions
+    """
+    # Dummy logic, replace with your real model
     return {
-        'home_team': match['home_team'],
-        'away_team': match['away_team'],
-        'league': match['league'],
-        'minute': match['minute'],
-        'over_prob': round(over_prob*100,1),
-        'btts_prob': round(btts_prob*100,1),
-        'last10_prob': round(last10_prob*100,1),
-        'top_scores': correct_scores
+        "over_prob": round(np.random.uniform(40, 90), 1),
+        "btts_prob": round(np.random.uniform(50, 90), 1),
+        "last10_prob": round(np.random.uniform(5, 25), 1),
+        "top_scores": [(1,1), (2,1)]
     }
 
-# -------- SEND TELEGRAM MESSAGE ---------------
-def send_prediction(pred):
-    message = (f"⚽ Match: {pred['home_team']} vs {pred['away_team']}\n"
-               f"League: {pred['league']}\n"
-               f"Time: {pred['minute']}'\n"
-               f"Over 0.5-5.5 Goal Probability: {pred['over_prob']}%\n"
-               f"BTTS Probability: {pred['btts_prob']}%\n"
-               f"Last 10-min Goal Probability: {pred['last10_prob']}%\n"
-               f"Top Correct Scores: {pred['top_scores']}\n")
+# -----------------------
+# Fetch live matches from API-Football
+# -----------------------
+def fetch_live_matches_apifootball():
+    url = "https://v3.football.api-sports.io/fixtures?live=all"
+    headers = {"x-apisports-key": API_FOOTBALL_KEY}
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        data = res.json()
+        matches = []
+        for f in data['response']:
+            fixture = f['fixture']
+            league = f['league']
+            teams = f['teams']
+            goals = f['goals']
+            minute = fixture['status']['elapsed']
+            matches.append({
+                "league": league['name'],
+                "home": teams['home']['name'],
+                "away": teams['away']['name'],
+                "minute": minute,
+                "home_goals": goals['home'],
+                "away_goals": goals['away'],
+                "h2h": {},       # Add H2H/corners if available
+            })
+        return matches
+    except Exception as e:
+        print("API-Football fetch failed:", e)
+        return []
+
+# -----------------------
+# Fetch live matches from SportMonks (fallback)
+# -----------------------
+def fetch_live_matches_sportmonks():
+    url = f"https://soccer.sportmonks.com/api/v2.0/livescores?api_token={SPORTMONKS_KEY}"
+    try:
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        matches = []
+        for f in data.get('data', []):
+            matches.append({
+                "league": f['league']['data']['name'] if 'league' in f else "Unknown League",
+                "home": f['localTeam']['data']['name'] if 'localTeam' in f else "Home",
+                "away": f['visitorTeam']['data']['name'] if 'visitorTeam' in f else "Away",
+                "minute": f.get('time', {}).get('minute', 0),
+                "home_goals": f.get('scores', {}).get('localteam_score', 0),
+                "away_goals": f.get('scores', {}).get('visitorteam_score', 0),
+                "h2h": {},   # Add H2H/corners if available
+            })
+        return matches
+    except Exception as e:
+        print("SportMonks fetch failed:", e)
+        return []
+
+# -----------------------
+# Send message to Telegram
+# -----------------------
+def send_match_prediction(match):
+    preds = predict_match(match)
+    message = f"""
+⚽ League: {match['league']}
+Match: {match['home']} vs {match['away']}
+Minute: {match['minute']}'  
+Over 0.5-5.5 Goal Probability: {preds['over_prob']}%
+BTTS Probability: {preds['btts_prob']}%
+Last 10-min Goal Probability: {preds['last10_prob']}%
+Top Correct Scores: {preds['top_scores']}
+"""
     bot.send_message(OWNER_CHAT_ID, message)
 
-# -------- MAIN LOOP --------------------------
+# -----------------------
+# Main loop
+# -----------------------
 def main_loop():
     while True:
-        try:
-            matches = fetch_live_matches()
-            if not matches:
-                print("⚠️ No live matches right now.")
+        print(f"[{datetime.now()}] Fetching live matches...")
+        matches = fetch_live_matches_apifootball()
+        if not matches:
+            matches = fetch_live_matches_sportmonks()
+        
+        if not matches:
+            print("⚠️ No live matches right now.")
+            bot.send_message(OWNER_CHAT_ID, "⚠️ No live matches right now.")
+        else:
             for match in matches:
-                pred = predict_match(match)
-                send_prediction(pred)
-            print("✅ Cycle complete. Waiting 7 minutes...")
-            time.sleep(420)  # 7 minutes
-        except Exception as e:
-            print(f"⚠️ Error in main loop: {e}")
-            time.sleep(60)
+                send_match_prediction(match)
+        
+        print("✅ Cycle complete. Waiting 7 minutes...")
+        time.sleep(420)  # 7 minutes
 
-# -------- FLASK APP FOR RAILWAY ---------------
-app = Flask(__name__)
-
-@app.route("/")
-def index():
-    return "MyBetAlert_Bot is running!"
-
-# -------- RUN THREADS -------------------------
+# -----------------------
+# Start bot
+# -----------------------
 if __name__ == "__main__":
-    Thread(target=main_loop, daemon=True).start()
-    app.run(host="0.0.0.0", port=PORT)
+    print(f"{BOT_NAME} started...")
+    main_loop()

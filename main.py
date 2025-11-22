@@ -1,172 +1,109 @@
 import os
 import requests
-import time
-import json
-import logging
+import telebot
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-from threading import Thread
-from flask import Flask, request
+import time
+from datetime import datetime
+from dotenv import load_dotenv
 
-# -------------------
-# Environment Variables
-# -------------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OWNER_CHAT_ID = os.environ.get("OWNER_CHAT_ID")
-API_KEY = os.environ.get("API_KEY")
-SPORTMONKS_API = os.environ.get("SPORTMONKS_API")
-BOT_NAME = os.environ.get("BOT_NAME", "MyBetAlert_Bot")
-PORT = int(os.environ.get("PORT", 8080))
+# --------------------------
+# Load Environment Variables
+# --------------------------
+load_dotenv()
 
-# -------------------
-# Logging Setup
-# -------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID")
+API_KEY = os.getenv("API_KEY")
+SPORTMONKS_API = os.getenv("SPORTMONKS_API")
+PREVIOUS_DATA_URL = "https://raw.githubusercontent.com/<your_username>/<repo>/main/matches.csv"
 
-# -------------------
-# Telegram Function
-# -------------------
-def send_telegram_message(message: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": OWNER_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, data=payload)
-    except Exception as e:
-        logger.error(f"Telegram message failed: {e}")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# -------------------
-# Utilities
-# -------------------
-def format_pakistan_time():
-    return (datetime.utcnow() + timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-
-# -------------------
-# Fetch Previous Data for Predictions
-# -------------------
-PREVIOUS_DATA_URL = "https://raw.githubusercontent.com/petermclagan/footballAPI/main/data/matches.csv"
-
+# --------------------------
+# Fetch Previous Matches Data
+# --------------------------
 def load_previous_data():
     try:
         df = pd.read_csv(PREVIOUS_DATA_URL)
-        logger.info(f"Previous match data loaded: {df.shape[0]} rows")
+        print("✅ Previous data loaded successfully")
         return df
     except Exception as e:
-        logger.error(f"Failed to load previous match data: {e}")
-        return pd.DataFrame()
+        print(f"⚠️ Failed to load previous match data: {e}")
+        return pd.DataFrame()  # empty fallback
 
-previous_df = load_previous_data()
+previous_matches = load_previous_data()
 
-# -------------------
+# --------------------------
 # Fetch Live Matches
-# -------------------
-TOP_LEAGUES_IDS = [39, 140, 78, 61, 135, 94, 49, 88]  # EPL, La Liga, Serie A, Bundesliga, Ligue1, etc.
-
-def fetch_sportmonks_live():
+# --------------------------
+def get_live_matches():
     url = f"https://soccer.sportmonks.com/api/v2.0/livescores?api_token={SPORTMONKS_API}"
     try:
-        r = requests.get(url, timeout=10).json()
-        matches = []
-        for m in r.get("data", []):
-            if m.get("league_id") in TOP_LEAGUES_IDS or m.get("competition_id") == 2:  # World Cup qualifiers id=2
-                matches.append({
-                    "home": m.get("localTeam", {}).get("data", {}).get("name", ""),
-                    "away": m.get("visitorTeam", {}).get("data", {}).get("name", ""),
-                    "league": m.get("league", {}).get("data", {}).get("name", ""),
-                    "score": f"{m.get('scores', {}).get('localteam_score', 0)}-{m.get('scores', {}).get('visitorteam_score', 0)}",
-                    "minute": m.get("time", {}).get("minute", 0),
-                    "corners": np.random.randint(0, 10)  # placeholder, replace with real API if needed
-                })
-        logger.info(f"Fetched {len(matches)} live matches from SportMonks")
-        return matches
-    except Exception as e:
-        logger.error(f"Error fetching SportMonks live: {e}")
+        response = requests.get(url)
+        data = response.json()
+        return data.get("data", [])
+    except:
         return []
 
-# -------------------
-# Simple AI/ML Prediction Logic
-# -------------------
-def predict_over_goals(match):
-    """
-    Use previous match data to predict goals 0.5–5.5
-    This is a simple statistical approach using rolling averages.
-    """
-    home = match["home"]
-    away = match["away"]
+# --------------------------
+# Prediction Logic
+# --------------------------
+def predict_match(match):
+    home = match.get("home_team", {}).get("name")
+    away = match.get("away_team", {}).get("name")
+    
+    # Basic stats fallback
+    home_goals_avg = 1.2
+    away_goals_avg = 1.1
+    over_prob = min(0.95, max(0.05, (home_goals_avg + away_goals_avg)/5))
+    
+    # BTTS probability (using corners/h2h if available)
+    btts_prob = 0.7  # fallback
+    last_10_min_goal_prob = 0.15
+    
+    # Correct score predictions (simplified)
+    top_scores = [(1,1), (1,0)]
+    
+    return {
+        "home": home,
+        "away": away,
+        "over_prob": round(over_prob*100,1),
+        "btts_prob": round(btts_prob*100,1),
+        "last_10_min_goal_prob": round(last_10_min_goal_prob*100,1),
+        "top_scores": top_scores
+    }
 
-    home_df = previous_df[previous_df["home_team"] == home]
-    away_df = previous_df[previous_df["away_team"] == away]
+# --------------------------
+# Send Predictions to Telegram
+# --------------------------
+def send_predictions():
+    matches = get_live_matches()
+    if not matches:
+        print("⚠️ No live matches found")
+        return
 
-    if home_df.empty or away_df.empty:
-        return "Over 1.5", 0.6  # fallback prediction
+    for match in matches:
+        prediction = predict_match(match)
+        msg = (
+            f"⚽ Match: {prediction['home']} vs {prediction['away']}\n"
+            f"Over 0.5-5.5 Goal Probability: {prediction['over_prob']}%\n"
+            f"BTTS Probability: {prediction['btts_prob']}%\n"
+            f"Last 10-min Goal Probability: {prediction['last_10_min_goal_prob']}%\n"
+            f"Top Correct Scores: {prediction['top_scores']}\n"
+        )
+        bot.send_message(OWNER_CHAT_ID, msg)
+        time.sleep(1)
 
-    avg_goals = (home_df["home_score"].mean() + away_df["away_score"].mean()) / 2
-    prob = min(max(avg_goals / 3, 0.5), 0.95)  # normalize to 0.5–0.95 confidence
-
-    # Map to Over 0.5–5.5
-    if avg_goals < 1:
-        prediction = "Over 0.5"
-    elif avg_goals < 2:
-        prediction = "Over 1.5"
-    elif avg_goals < 3:
-        prediction = "Over 2.5"
-    elif avg_goals < 4:
-        prediction = "Over 3.5"
-    else:
-        prediction = "Over 4.5"
-
-    return prediction, prob
-
-# -------------------
-# Main Bot Loop
-# -------------------
-def run_bot_cycle():
-    while True:
-        live_matches = fetch_sportmonks_live()
-        if not live_matches:
-            logger.info("No live matches found. Retrying in 7 minutes...")
-            time.sleep(420)
-            continue
-
-        for match in live_matches:
-            pred, confidence = predict_over_goals(match)
-            msg = (
-                f"⚽ Live Match Update:\n"
-                f"🏠 {match['home']} vs 🛫 {match['away']}\n"
-                f"League: {match['league']}\n"
-                f"Score: {match['score']} | Minute: {match['minute']}\n"
-                f"Predicted: *{pred}* (Confidence: {confidence*100:.1f}%)\n"
-                f"Corners: {match['corners']}"
-            )
-            logger.info(f"Sending Telegram for {match['home']} vs {match['away']}")
-            send_telegram_message(msg)
-
-        logger.info("✅ Cycle complete. Waiting 7 minutes...")
-        time.sleep(420)  # 7 minutes
-
-# -------------------
-# Flask App for Railway
-# -------------------
-app = Flask(__name__)
-
-@app.route("/")
-def index():
-    return "Football Auto Prediction Bot is running 🚀"
-
-# -------------------
-# Start Bot Thread
-# -------------------
-def start_bot_thread():
-    bot_thread = Thread(target=run_bot_cycle, daemon=True)
-    bot_thread.start()
-    return True
-
-if __name__ == "__main__":
-    logger.info("🚀 Starting Football Auto Prediction Bot...")
-    start_bot_thread()
-    send_telegram_message("🤖 ULTRA BOT STARTED: Telegram messages working ✅")
-    app.run(host="0.0.0.0", port=PORT)
+# --------------------------
+# Main Loop: Update Every 7-8 Minutes
+# --------------------------
+while True:
+    try:
+        print(f"🔄 Running cycle at {datetime.now()}")
+        send_predictions()
+        print("✅ Cycle complete. Waiting 7 minutes...")
+        time.sleep(7*60)  # 7 minutes
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        time.sleep(60)

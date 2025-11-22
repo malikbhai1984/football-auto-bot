@@ -7,6 +7,7 @@ import numpy as np
 from datetime import datetime
 from dotenv import load_dotenv
 from threading import Thread
+from flask import Flask
 
 # ---------------- ENV VARIABLES ----------------
 load_dotenv()
@@ -15,16 +16,17 @@ OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID"))
 API_KEY = os.environ.get("API_KEY")
 SPORTMONKS_API = os.environ.get("SPORTMONKS_API")
 BOT_NAME = os.environ.get("BOT_NAME", "MyBetAlert_Bot")
+PORT = int(os.environ.get("PORT", 8080))
 
 # ----------- Top Leagues & WCQ IDs -------------
-TOP_LEAGUES_IDS = [39, 140, 78, 61, 135, 2, 3, 8]  # EPL, LaLiga, Serie A, Bundesliga, Ligue 1, etc.
+TOP_LEAGUES_IDS = [39, 140, 78, 61, 135, 2, 3, 8]
 
 # -------- TELEGRAM BOT INIT -------------------
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # -------- FETCH LIVE MATCHES ------------------
 def fetch_live_matches():
-    # ---------- API-Football ----------
+    # API-Football
     try:
         headers = {"x-rapidapi-key": API_KEY, "x-rapidapi-host": "api-football-v1.p.rapidapi.com"}
         url = "https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all"
@@ -41,12 +43,11 @@ def fetch_live_matches():
                     'minute': match['fixture']['status'].get('elapsed', 0)
                 })
         if live_matches:
-            print(f"✅ API-Football live matches fetched: {len(live_matches)}")
             return live_matches
     except Exception as e:
         print(f"⚠️ API-Football failed: {e}")
 
-    # ---------- SportMonks Fallback ----------
+    # SportMonks Fallback
     try:
         url = f"https://api.sportmonks.com/v3/football/livescores?api_token={SPORTMONKS_API}"
         r = requests.get(url, timeout=10)
@@ -62,7 +63,6 @@ def fetch_live_matches():
                     'minute': match.get('time', {}).get('minute', 0)
                 })
         if live_matches:
-            print(f"✅ SportMonks live matches fetched: {len(live_matches)}")
             return live_matches
     except Exception as e:
         print(f"⚠️ SportMonks failed: {e}")
@@ -71,10 +71,6 @@ def fetch_live_matches():
 
 # -------- PREDICTION LOGIC -------------------
 def predict_match(match):
-    """
-    Dummy ML/AI prediction using random probabilities.
-    Replace with your own ML model or statistical formulas.
-    """
     over_prob = np.random.uniform(0.4, 0.9)
     btts_prob = np.random.uniform(0.3, 0.8)
     last10_prob = np.random.uniform(0.1, 0.3)
@@ -117,8 +113,14 @@ def main_loop():
             print(f"⚠️ Error in main loop: {e}")
             time.sleep(60)
 
-# -------- RUN IN THREAD ----------------------
+# -------- FLASK APP FOR RAILWAY ---------------
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    return "MyBetAlert_Bot is running!"
+
+# -------- RUN THREADS -------------------------
 if __name__ == "__main__":
-    print("🚀 Bot started...")
-    Thread(target=main_loop).start()
-    bot.polling(none_stop=True)
+    Thread(target=main_loop, daemon=True).start()
+    app.run(host="0.0.0.0", port=PORT)

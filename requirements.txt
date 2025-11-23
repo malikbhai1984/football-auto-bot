@@ -2,9 +2,4 @@ pyTelegramBotAPI==4.21.0
 requests==2.31.0 
 Flask==3.0.3 
 python-dotenv==1.0.1 
-gunicorn==23.0.0 
-pytz scikit-learn 
-numpy 
-pandas 
-xgboost 
-joblib
+

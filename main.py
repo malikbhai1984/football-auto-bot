@@ -49,14 +49,6 @@ except (ValueError, TypeError) as e:
 app = Flask(__name__)
 PAK_TZ = pytz.timezone('Asia/Karachi')
 
-# Enhanced Leagues Configuration
-TOP_LEAGUES = {
-    39: "Premier League", 140: "La Liga", 78: "Bundesliga", 
-    135: "Serie A", 61: "Ligue 1", 94: "Primeira Liga", 
-    88: "Eredivisie", 203: "UEFA Champions League", 2: "Champions League",
-    5: "Europa League", 45: "FA Cup", 48: "EFL Cup"
-}
-
 class Config:
     BOT_CYCLE_INTERVAL = 60  # 1 minute
     MIN_CONFIDENCE_THRESHOLD = 85
@@ -311,8 +303,6 @@ def generate_predictions(match_data):
     predictions = {}
     
     try:
-        home_team = match_data['home']
-        away_team = match_data['away']
         current_score = match_data.get('home_score', 0), match_data.get('away_score', 0)
         current_minute = match_data.get('current_minute', 0)
         

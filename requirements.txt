@@ -9,3 +9,6 @@ numpy
 pandas
 xgboost
 
+
+sofascore-wrapper>=1.1.1
+playwright

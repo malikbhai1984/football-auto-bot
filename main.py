@@ -3,42 +3,26 @@ import requests
 import time
 from flask import Flask
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 from threading import Thread
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-from dotenv import load_dotenv
-load_dotenv()
-
-# Environment variables - Updated with your new API key
+# Environment variables - Metal automatically injects these
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
-API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "bbafeb00dfe6e1e97248c9a3c8b9c69e").strip()  # ✅ Updated API Key
+API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", "bbafeb00dfe6e1e97248c9a3c8b9c69e").strip()
 
-logger.info("🚀 Starting API-FOOTBALL.com Live Bot...")
-
-# Validate credentials
-if not BOT_TOKEN:
-    logger.error("❌ BOT_TOKEN not found")
-if not OWNER_CHAT_ID:
-    logger.error("❌ OWNER_CHAT_ID not found")
-
-try:
-    OWNER_CHAT_ID = int(OWNER_CHAT_ID) if OWNER_CHAT_ID else 0
-except (ValueError, TypeError) as e:
-    logger.error(f"❌ Invalid OWNER_CHAT_ID: {e}")
-    OWNER_CHAT_ID = 0
+logger.info("🚀 Starting Football Prediction Bot on Metal...")
 
 app = Flask(__name__)
 PAK_TZ = pytz.timezone('Asia/Karachi')
 
 class Config:
-    BOT_CYCLE_INTERVAL = 120  # 2 minutes
+    BOT_CYCLE_INTERVAL = 300  # 5 minutes
     MIN_CONFIDENCE_THRESHOLD = 85
 
 bot_started = False
@@ -52,81 +36,66 @@ def format_pakistan_time(dt=None):
         dt = get_pakistan_time()
     return dt.strftime('%H:%M PKT')
 
-def format_date(dt=None):
-    if dt is None:
-        dt = get_pakistan_time()
-    return dt.strftime('%Y-%m-%d')
-
-def send_telegram_message(message, max_retries=2):
+def send_telegram_message(message):
     """Send message to Telegram"""
     global message_counter
-    
     if not BOT_TOKEN or not OWNER_CHAT_ID:
+        logger.error("❌ Missing Telegram credentials")
         return False
         
     telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    
-    for attempt in range(max_retries):
-        try:
-            payload = {
-                'chat_id': OWNER_CHAT_ID,
-                'text': message,
-                'parse_mode': 'Markdown'
-            }
-            
-            response = requests.post(telegram_url, json=payload, timeout=10)
-            
-            if response.status_code == 200:
-                message_counter += 1
-                logger.info(f"✅ Message #{message_counter} sent")
-                return True
-            else:
-                logger.error(f"❌ Telegram API error: {response.status_code}")
-                
-        except Exception as e:
-            logger.error(f"❌ Telegram send attempt {attempt + 1} failed: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(2)
-    
+    try:
+        payload = {
+            'chat_id': OWNER_CHAT_ID,
+            'text': message,
+            'parse_mode': 'Markdown'
+        }
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        if response.status_code == 200:
+            message_counter += 1
+            logger.info(f"✅ Message #{message_counter} sent")
+            return True
+    except Exception as e:
+        logger.error(f"❌ Telegram error: {e}")
     return False
 
-# ==================== API-FOOTBALL.COM ENDPOINT ====================
-def fetch_live_matches_from_apifootball():
-    """Fetch live matches from API-Football.com directly"""
-    live_matches = []
+# ==================== API-FOOTBALL LIVE MATCHES ====================
+def fetch_live_matches():
+    """Fetch LIVE matches from API-Football.com"""
+    matches = []
     
     if not API_FOOTBALL_KEY:
         logger.error("❌ API_FOOTBALL_KEY not set")
-        return []
+        return matches
     
     try:
-        # API-Football.com direct endpoint
         url = "https://v3.football.api-sports.io/fixtures"
         headers = {
-            'x-rapidapi-key': API_FOOTBALL_KEY,  # ✅ Your new API key
+            'x-rapidapi-key': API_FOOTBALL_KEY,
             'x-rapidapi-host': 'v3.football.api-sports.io'
         }
         
-        # Get LIVE matches
         params = {'live': 'all'}
+        
+        logger.info("🔍 Fetching live matches from API-Football...")
         response = requests.get(url, headers=headers, params=params, timeout=15)
         
-        logger.info(f"🔍 API Response Status: {response.status_code}")
+        logger.info(f"📡 API Response Status: {response.status_code}")
         
         if response.status_code == 200:
             data = response.json()
             
-            # Check API response structure
             if 'response' in data:
                 fixtures = data['response']
-                logger.info(f"📊 Fixtures found: {len(fixtures)}")
+                logger.info(f"📊 Found {len(fixtures)} fixtures")
                 
                 for fixture in fixtures:
                     fixture_data = fixture.get('fixture', {})
                     status = fixture_data.get('status', {})
+                    status_short = status.get('short')
                     
                     # Check if match is live
-                    if status.get('short') in ['1H', '2H', 'HT', 'ET', 'P']:
+                    if status_short in ['1H', '2H', 'HT', 'ET', 'P']:
                         teams = fixture.get('teams', {})
                         goals = fixture.get('goals', {})
                         league = fixture.get('league', {})
@@ -140,21 +109,21 @@ def fetch_live_matches_from_apifootball():
                         country = league.get('country', 'Unknown')
                         
                         match_data = {
-                            "home": home_team,
-                            "away": away_team,
-                            "league": f"{league_name} ({country})",
-                            "score": f"{home_score}-{away_score}",
-                            "minute": f"{minute}'",
-                            "current_minute": minute,
-                            "home_score": home_score,
-                            "away_score": away_score,
-                            "status": "LIVE",
-                            "fixture_id": fixture_data.get('id'),
-                            "source": "api-football.com",
-                            "timestamp": get_pakistan_time()
+                            'home': home_team,
+                            'away': away_team,
+                            'score': f"{home_score}-{away_score}",
+                            'minute': f"{minute}'",
+                            'current_minute': minute,
+                            'home_score': home_score,
+                            'away_score': away_score,
+                            'league': f"{league_name} ({country})",
+                            'status': 'LIVE',
+                            'fixture_id': fixture_data.get('id'),
+                            'source': 'api-football',
+                            'timestamp': get_pakistan_time()
                         }
-                        live_matches.append(match_data)
-                        logger.info(f"✅ LIVE: {home_team} vs {away_team} - {home_score}-{away_score} ({minute}')")
+                        matches.append(match_data)
+                        logger.info(f"✅ LIVE: {home_team} {home_score}-{away_score} {away_team} ({minute}')")
             
             elif 'errors' in data:
                 errors = data['errors']
@@ -163,63 +132,12 @@ def fetch_live_matches_from_apifootball():
         elif response.status_code == 429:
             logger.error("❌ API rate limit exceeded")
         else:
-            logger.error(f"❌ API error: {response.status_code} - {response.text}")
+            logger.error(f"❌ API error {response.status_code}")
             
     except Exception as e:
-        logger.error(f"❌ API connection error: {e}")
+        logger.error(f"❌ API-Football connection error: {e}")
     
-    return live_matches
-
-# ==================== FALLBACK TO MANUAL DATA ====================
-def get_manual_live_matches():
-    """Manual fallback with real matches from your screenshots"""
-    current_time = get_pakistan_time()
-    current_hour = current_time.hour
-    
-    # Based on your screenshots - REAL matches happening now
-    manual_matches = [
-        {
-            "home": "Villarreal",
-            "away": "Mallorca", 
-            "league": "La Liga (Spain)",
-            "score": "2-1",
-            "minute": "65'",
-            "current_minute": 65,
-            "home_score": 2,
-            "away_score": 1,
-            "status": "LIVE",
-            "source": "manual-fallback",
-            "timestamp": get_pakistan_time()
-        },
-        {
-            "home": "Feyenoord", 
-            "away": "Nijmegen",
-            "league": "Eredivisie (Netherlands)",
-            "score": "1-0", 
-            "minute": "45'",
-            "current_minute": 45,
-            "home_score": 1,
-            "away_score": 0,
-            "status": "LIVE",
-            "source": "manual-fallback", 
-            "timestamp": get_pakistan_time()
-        }
-    ]
-    
-    return manual_matches
-
-def fetch_live_matches():
-    """Main function to fetch live matches with fallback"""
-    # Try API first
-    api_matches = fetch_live_matches_from_apifootball()
-    
-    if api_matches:
-        logger.info(f"✅ API matches found: {len(api_matches)}")
-        return api_matches
-    else:
-        # Fallback to manual data
-        logger.info("🔄 Using manual fallback data")
-        return get_manual_live_matches()
+    return matches
 
 # ==================== PREDICTION ENGINE ====================
 def generate_predictions(match_data):
@@ -260,7 +178,6 @@ def generate_predictions(match_data):
     return predictions
 
 def predict_winning_team(current_score, current_minute):
-    """Predict winning team"""
     home_score, away_score = current_score
     goal_difference = home_score - away_score
     
@@ -279,7 +196,6 @@ def predict_winning_team(current_score, current_minute):
     return {'prediction': 'None', 'confidence': 70, 'method': 'insufficient_data'}
 
 def predict_over_under(current_score, current_minute, goals_line):
-    """Predict Over/Under"""
     home_score, away_score = current_score
     total_goals = home_score + away_score
     
@@ -294,7 +210,6 @@ def predict_over_under(current_score, current_minute, goals_line):
         return {'prediction': f'Under {goals_line}', 'confidence': 75, 'method': 'goal_rate'}
 
 def predict_btts(current_score, current_minute):
-    """Predict Both Teams To Score"""
     home_score, away_score = current_score
     
     if home_score > 0 and away_score > 0:
@@ -317,13 +232,12 @@ def analyze_live_matches():
             no_matches_msg = f"""🔍 **NO LIVE MATCHES FOUND**
 
 ⏰ **Time:** {format_pakistan_time()}
-📅 **Date:** {format_date()}
+📅 **Date:** {datetime.now().strftime('%Y-%m-%d')}
 
-🌐 **API Status:** Checking...
-🔍 **Fallback:** Activated
+🌐 **API Status:** Active
+🔍 **Next Check:** 5 minutes
 
-No live matches detected.
-Checking again in 2 minutes."""
+No live matches currently playing."""
             send_telegram_message(no_matches_msg)
             return 0
         
@@ -360,7 +274,7 @@ def format_prediction_message(match, predictions):
 🏆 **League:** {match['league']}
 🕒 **Minute:** {match['minute']}
 📊 **Score:** {match['score']}
-🌐 **Source:** {match.get('source', 'Live Data')}
+🌐 **Source:** API-Football.com
 
 🏠 **{match['home']}** vs 🛫 **{match['away']}**
 
@@ -384,7 +298,6 @@ def format_prediction_message(match, predictions):
     message += f"""
 📊 **Analysis Time:** {current_time}
 🎯 **Confidence Filter:** 85%+ Only
-🔍 **Data Source:** Real Match Analysis
 
 ⚠️ *Professional betting analysis*"""
 
@@ -392,26 +305,24 @@ def format_prediction_message(match, predictions):
 
 def send_startup_message():
     """Send startup message"""
-    startup_msg = f"""🚀 **LIVE MATCH PREDICTION BOT STARTED!**
+    startup_msg = f"""🚀 **FOOTBALL PREDICTION BOT STARTED!**
 
 ⏰ **Startup Time:** {format_pakistan_time()}
-📅 **Today's Date:** {format_date()}
+📅 **Today's Date:** {datetime.now().strftime('%Y-%m-%d')}
 🎯 **Confidence Threshold:** 85%+ ONLY
 
-📊 **System Status:**
-   • Telegram Bot: ✅ Connected
-   • API-Football: ✅ Active (New Key)
-   • Fallback Data: ✅ Ready
-   • Prediction Engine: ✅ Running
+🌐 **API Status:** Connected
+🔍 **Monitoring:** Live Matches
+⚡ **Interval:** 5 Minutes
 
-Bot is now scanning for live opportunities!"""
+Bot is now actively scanning for live matches!"""
 
     send_telegram_message(startup_msg)
 
 def bot_worker():
     """Main bot worker"""
     global bot_started
-    logger.info("🔄 Starting Live Match Bot Worker...")
+    logger.info("🔄 Starting Football Prediction Bot...")
     
     bot_started = True
     send_startup_message()
@@ -428,16 +339,6 @@ def bot_worker():
             
             if predictions_sent > 0:
                 logger.info(f"📈 Cycle #{cycle}: {predictions_sent} predictions sent")
-            
-            # Status update every 3 cycles
-            if cycle % 3 == 0:
-                live_matches = fetch_live_matches()
-                status_msg = f"""🔄 **Bot Status Update**
-Cycles: {cycle}
-Live Matches: {len(live_matches)}
-Predictions Sent: {predictions_sent}
-Last Check: {current_time}"""
-                send_telegram_message(status_msg)
             
             time.sleep(Config.BOT_CYCLE_INTERVAL)
             
@@ -470,28 +371,17 @@ def home():
 
 @app.route("/health")
 def health():
-    return "OK", 200
-
-@app.route("/test")
-def test():
-    live_matches = fetch_live_matches()
-    return {
-        "status": "working",
-        "live_matches": len(live_matches),
-        "timestamp": format_pakistan_time()
-    }
+    return {"status": "healthy", "timestamp": format_pakistan_time()}, 200
 
 # ==================== STARTUP ====================
-if BOT_TOKEN and OWNER_CHAT_ID:
-    logger.info("🎯 Auto-starting Bot...")
-    if start_bot_thread():
-        logger.info("✅ Bot auto-started successfully")
-    else:
-        logger.error("❌ Bot auto-start failed")
-else:
-    logger.warning("⚠️ Missing credentials - bot not started")
-
 if __name__ == "__main__":
-    logger.info("🌐 Starting Flask server...")
+    logger.info("🌐 Starting Flask server on Metal...")
+    
+    if BOT_TOKEN and OWNER_CHAT_ID and API_FOOTBALL_KEY:
+        logger.info("🎯 Starting Bot with credentials...")
+        start_bot_thread()
+    else:
+        logger.warning("⚠️ Bot not started - missing credentials")
+    
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port, debug=False)

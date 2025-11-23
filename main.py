@@ -1,23 +1,19 @@
 import os
 import requests
-import telebot
-from dotenv import load_dotenv
 import time
-from flask import Flask, request
+from flask import Flask
 import logging
 import random
 from datetime import datetime, timedelta
 import pytz
-from threading import Thread, Lock
+from threading import Thread
 import json
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-import asyncio
 import aiohttp
-from sofascore_wrapper.api import SofascoreAPI
-import io
+import asyncio
 import re
 
 # Configure logging
@@ -28,14 +24,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Load environment variables
+from dotenv import load_dotenv
 load_dotenv()
 
 # Environment variables
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 OWNER_CHAT_ID = os.getenv("OWNER_CHAT_ID", "").strip()
-SPORTMONKS_API = os.getenv("API_KEY", "").strip()
 
-logger.info("🚀 Initializing ULTRA LIVE Prediction Bot with Multiple Sources...")
+logger.info("🚀 Initializing ULTRA LIVE Prediction Bot...")
 
 # Validate critical environment variables
 if not BOT_TOKEN:
@@ -49,12 +45,6 @@ try:
 except (ValueError, TypeError) as e:
     logger.error(f"❌ Invalid OWNER_CHAT_ID: {e}")
     OWNER_CHAT_ID = 0
-
-if BOT_TOKEN:
-    bot = telebot.TeleBot(BOT_TOKEN)
-else:
-    logger.error("❌ BOT_TOKEN missing")
-    bot = None
 
 app = Flask(__name__)
 PAK_TZ = pytz.timezone('Asia/Karachi')
@@ -77,7 +67,6 @@ class Config:
 bot_started = False
 message_counter = 0
 historical_data = {}
-data_lock = Lock()
 
 # API usage tracker
 api_usage_tracker = {
@@ -110,18 +99,38 @@ def update_api_status(api_name, success=True):
             api_usage_tracker[api_name]['failures'] += 1
 
 def send_telegram_message(message, max_retries=3):
+    """Send message to Telegram using direct API calls"""
     global message_counter
-    if not bot or not OWNER_CHAT_ID:
+    
+    if not BOT_TOKEN or not OWNER_CHAT_ID:
+        logger.error("❌ Cannot send message - bot token or chat ID not configured")
         return False
         
+    telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    
     for attempt in range(max_retries):
         try:
-            message_counter += 1
-            bot.send_message(OWNER_CHAT_ID, message, parse_mode='Markdown')
-            return True
+            payload = {
+                'chat_id': OWNER_CHAT_ID,
+                'text': message,
+                'parse_mode': 'Markdown'
+            }
+            
+            response = requests.post(telegram_url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                message_counter += 1
+                logger.info(f"✅ Message #{message_counter} sent successfully")
+                return True
+            else:
+                logger.error(f"❌ Telegram API error: {response.status_code} - {response.text}")
+                
         except Exception as e:
+            logger.error(f"❌ Telegram send attempt {attempt + 1} failed: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
+    
+    logger.error(f"🚫 All {max_retries} Telegram send attempts failed")
     return False
 
 # ==================== LIVESCORE API IMPLEMENTATION ====================
@@ -199,54 +208,58 @@ def extract_minute(minute_str):
     except:
         return 0
 
-# ==================== SOFASCORE WRAPPER IMPLEMENTATION ====================
+# ==================== SOFASCORE API IMPLEMENTATION ====================
 async def fetch_sofascore_matches_async():
-    """Fetch live matches using SofaScore wrapper"""
+    """Fetch live matches using SofaScore direct API"""
     try:
-        api = SofascoreAPI()
+        url = "https://api.sofascore.com/api/v1/sport/football/events/live"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
         
-        # Get live matches using the wrapper
-        # Note: This might vary based on the actual library implementation
-        live_matches = await api.get_live_matches()
-        
-        current_matches = []
-        
-        for match in live_matches:
-            try:
-                # Adjust these field names based on actual SofaScore wrapper response
-                home_team = match.get('homeTeam', {}).get('name', 'Unknown Home')
-                away_team = match.get('awayTeam', {}).get('name', 'Unknown Away')
-                home_score = match.get('homeScore', {}).get('current', 0)
-                away_score = match.get('awayScore', {}).get('current', 0)
-                minute = match.get('status', {}).get('displayTime', 0)
-                league = match.get('tournament', {}).get('name', 'Unknown League')
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=10) as response:
+                if response.status != 200:
+                    return []
                 
-                match_data = {
-                    "home": home_team,
-                    "away": away_team,
-                    "league": league,
-                    "score": f"{home_score}-{away_score}",
-                    "minute": str(minute),
-                    "current_minute": minute if isinstance(minute, int) else extract_minute(str(minute)),
-                    "home_score": home_score,
-                    "away_score": away_score,
-                    "status": "LIVE",
-                    "match_id": f"SS_{match.get('id')}",
-                    "is_live": True,
-                    "timestamp": get_pakistan_time(),
-                    "source": "sofascore"
-                }
-                current_matches.append(match_data)
+                data = await response.json()
+                current_matches = []
                 
-            except Exception as e:
-                logger.error(f"❌ Error processing SofaScore match: {e}")
-                continue
-        
-        await api.close()
-        update_api_status('sofascore', success=True)
-        logger.info(f"✅ SofaScore matches found: {len(current_matches)}")
-        return current_matches
-        
+                for event in data.get('events', []):
+                    try:
+                        home_team = event.get('homeTeam', {}).get('name', 'Unknown Home')
+                        away_team = event.get('awayTeam', {}).get('name', 'Unknown Away')
+                        home_score = event.get('homeScore', {}).get('current', 0)
+                        away_score = event.get('awayScore', {}).get('current', 0)
+                        minute = event.get('status', {}).get('displayTime', 0)
+                        league = event.get('tournament', {}).get('name', 'Unknown League')
+                        
+                        match_data = {
+                            "home": home_team,
+                            "away": away_team,
+                            "league": league,
+                            "score": f"{home_score}-{away_score}",
+                            "minute": str(minute),
+                            "current_minute": minute if isinstance(minute, int) else extract_minute(str(minute)),
+                            "home_score": home_score,
+                            "away_score": away_score,
+                            "status": "LIVE",
+                            "match_id": f"SS_{event.get('id')}",
+                            "is_live": True,
+                            "timestamp": get_pakistan_time(),
+                            "source": "sofascore"
+                        }
+                        current_matches.append(match_data)
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error processing SofaScore match: {e}")
+                        continue
+                
+                update_api_status('sofascore', success=True)
+                logger.info(f"✅ SofaScore matches found: {len(current_matches)}")
+                return current_matches
+                
     except Exception as e:
         logger.error(f"❌ SofaScore API error: {e}")
         update_api_status('sofascore', success=False)
@@ -501,6 +514,16 @@ def health():
 @app.route("/health")
 def health_check():
     return "OK", 200
+
+@app.route("/test")
+def test():
+    """Test endpoint to check if bot is working"""
+    test_matches = fetch_current_live_matches()
+    return {
+        "status": "working",
+        "live_matches": len(test_matches),
+        "timestamp": format_pakistan_time()
+    }
 
 # ==================== BOT WORKER ====================
 def send_startup_message():
